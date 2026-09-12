@@ -91,8 +91,16 @@ Reference usage: opening/closing a project and the sidebar sections in `apps/web
 
 - `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.
 - `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
+- `apps/mobile`: Expo SDK 57 iOS client (`@synara/mobile`) that runs in Expo Go. Connects to a Synara server over the network via the bearer pairing flow (`POST /api/auth/bootstrap/bearer` → sessionToken → `POST /api/auth/ws-token` → `/ws?wsToken=`). Implements its own thin JSON-frame client for the Effect RPC WebSocket protocol in `apps/mobile/src/transport` — no Effect runtime in the bundle, and per-chunk Ack is mandatory for streams. Imports `@synara/contracts` / `@synara/shared` as types only; wire constants are copied into `apps/mobile/src/transport/protocolConstants.ts` (keep in sync with `packages/contracts/src/wsCompatibility.ts` and `ws.ts`).
+- `apps/mobile-dev`: Headless test-server and seed scripts for mobile development. Not shipped.
 - `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
 - `packages/shared`: Shared runtime utilities consumed by both server and web. Uses explicit subpath exports (e.g. `@synara/shared/git`) — no barrel index.
+
+## Mobile Conventions
+
+- Expo Go compatibility is a hard constraint until the project has an Xcode/EAS build path: no native modules.
+- Vitest for pure logic — never `bun test`.
+- Verification: `bun run --cwd apps/mobile typecheck`, `bun run --cwd apps/mobile test`, `bunx oxlint apps/mobile`, `bunx oxfmt --check apps/mobile`, `bun run --cwd apps/mobile export:ios`, and `bun run --cwd apps/mobile smoke -- --base-url <server> --session-token <tok>` against a running server.
 
 ## Local Dev Instance Isolation
 

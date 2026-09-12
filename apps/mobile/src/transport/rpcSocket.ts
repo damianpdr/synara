@@ -90,6 +90,13 @@ export class RpcSocket {
   private closed = false;
   private queue: string[] = [];
   private pingTimer: ReturnType<typeof setInterval> | undefined;
+  /**
+   * Resolvers waiting for the next `Pong`. The frame carries no requestId, so
+   * a Pong cannot be matched to the Ping that caused it — every waiter is
+   * drained on any Pong, including the keepalive's. That is exactly the
+   * liveness signal `ping()` is asking for.
+   */
+  private pongWaiters: ((alive: boolean) => void)[] = [];
 
   constructor(options: RpcSocketOptions) {
     this.options = options;
@@ -159,6 +166,29 @@ export class RpcSocket {
       }
       this.pending.set(id, entry);
       this.write(serializeFrame(encodeRequest({ id, tag: method, payload })));
+    });
+  }
+
+  /**
+   * Liveness probe: sends a `Ping` and resolves `true` if a `Pong` comes back
+   * inside `timeoutMs`, `false` otherwise (including when the socket is already
+   * closed). Never rejects and never tears the socket down — the caller decides
+   * what a dead socket means.
+   */
+  ping(timeoutMs = 3_000): Promise<boolean> {
+    if (!this.isOpen) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const settle = (alive: boolean): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.pongWaiters = this.pongWaiters.filter((waiter) => waiter !== settle);
+        resolve(alive);
+      };
+      const timer = setTimeout(() => settle(false), timeoutMs);
+      this.pongWaiters.push(settle);
+      this.write(serializeFrame(encodePing()));
     });
   }
 
@@ -273,8 +303,12 @@ export class RpcSocket {
         }
         return;
       }
-      case "Pong":
+      case "Pong": {
+        const waiters = this.pongWaiters;
+        this.pongWaiters = [];
+        for (const waiter of waiters) waiter(true);
         return;
+      }
       case "Defect":
       case "ClientProtocolError": {
         // Neither frame carries a requestId, so no individual promise can be
@@ -297,6 +331,9 @@ export class RpcSocket {
     this.open = false;
     if (this.pingTimer !== undefined) clearInterval(this.pingTimer);
     this.pingTimer = undefined;
+    const waiters = this.pongWaiters;
+    this.pongWaiters = [];
+    for (const waiter of waiters) waiter(false);
     const entries = [...this.pending.entries()];
     this.pending.clear();
     for (const [, entry] of entries) {

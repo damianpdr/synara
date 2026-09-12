@@ -14,11 +14,14 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
     "@synara/contracts": "workspace:*",
     "@synara/shared": "workspace:*",
     "expo": "~57.0.22",
     "expo-camera": "~57.0.5",
+    "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.18",
+    "expo-haptics": "~57.0.3",
     "expo-linking": "~57.0.10",
     "expo-router": "~57.0.21",
     "expo-secure-store": "~57.0.4",

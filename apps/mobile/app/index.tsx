@@ -1,150 +1,274 @@
 // FILE: index.tsx
-// Purpose: Connection screen — pair by QR, pairing URL, or host + session token.
+// Purpose: The main screen — every thread, grouped by project, live.
 // Layer: Mobile screens
+//
+// Also the connection gate: with nothing paired it renders the welcome/pairing
+// view in place rather than redirecting, so there is no frame where an empty
+// thread list flashes before the router catches up.
 
-import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { router, Stack } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { RefreshControl, SectionList, StyleSheet, View } from "react-native";
 
+import { ConnectView } from "@/features/connections/ConnectView";
+import { ConnectionBanner } from "@/features/shell/ConnectionBanner";
+import { ThreadRow } from "@/features/shell/ThreadRow";
+import { buildThreadSections, type ThreadRow as ThreadRowModel } from "@/features/shell/threadRows";
 import { useSynaraStore } from "@/state/synaraStore";
-import { QrScanner } from "@/ui/QrScanner";
-import { StatusPill } from "@/ui/StatusPill";
-import { colors, spacing } from "@/ui/theme";
+import { Card } from "@/ui/Card";
+import { EmptyState } from "@/ui/EmptyState";
+import { IconButton } from "@/ui/IconButton";
+import { Screen } from "@/ui/Screen";
+import { SectionHeader } from "@/ui/SectionHeader";
+import { SkeletonThreadList } from "@/ui/Skeleton";
+import { Text } from "@/ui/Text";
+import { useTheme } from "@/ui/ThemeProvider";
 
-export default function ConnectScreen() {
-  const { baseUrl, connection, pairingBusy, pairingError } = useSynaraStore();
-  const connectWithPairingUrl = useSynaraStore((state) => state.connectWithPairingUrl);
-  const connectWithSessionToken = useSynaraStore((state) => state.connectWithSessionToken);
-  const disconnect = useSynaraStore((state) => state.disconnect);
+/** Relative timestamps only need to be refreshed about as often as they change. */
+const CLOCK_TICK_MS = 30_000;
 
-  const [pairingUrl, setPairingUrl] = useState("");
-  const [host, setHost] = useState("");
-  const [token, setToken] = useState("");
-  const [scanning, setScanning] = useState(false);
+const NO_EDGES = [] as const;
 
-  // Navigate on the *transition* into "connected", never on the steady state:
-  // a plain `status === "connected"` check bounces the user straight back to
-  // /threads whenever they open this screen to re-pair or switch servers.
-  const wasConnected = useRef(connection.status === "connected");
+export default function ThreadsScreen() {
+  const theme = useTheme();
+  const hydrated = useSynaraStore((state) => state.hydrated);
+  const baseUrl = useSynaraStore((state) => state.baseUrl);
+  const shell = useSynaraStore((state) => state.shell);
+  const connection = useSynaraStore((state) => state.connection);
+  const refreshing = useSynaraStore((state) => state.refreshing);
+  const creatingThread = useSynaraStore((state) => state.creatingThread);
+  const createThreadError = useSynaraStore((state) => state.createThreadError);
+  const showArchived = useSynaraStore((state) => state.showArchived);
+  const collapsedProjectIds = useSynaraStore((state) => state.collapsedProjectIds);
+  const toggleProjectCollapsed = useSynaraStore((state) => state.toggleProjectCollapsed);
+  const refreshShell = useSynaraStore((state) => state.refreshShell);
+  const reconnectNow = useSynaraStore((state) => state.reconnectNow);
+  const createThread = useSynaraStore((state) => state.createThread);
+
+  const [query, setQuery] = useState("");
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
   useEffect(() => {
-    const isConnected = connection.status === "connected";
-    if (isConnected && !wasConnected.current) router.replace("/threads");
-    wasConnected.current = isConnected;
-  }, [connection.status]);
+    const timer = setInterval(() => setNowMs(Date.now()), CLOCK_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
 
-  if (scanning) {
+  const { sections } = useMemo(
+    () =>
+      buildThreadSections({
+        threads: shell.threads,
+        projects: shell.projects,
+        showArchived,
+        query,
+        collapsedProjectIds,
+        nowMs,
+      }),
+    [shell.threads, shell.projects, showArchived, query, collapsedProjectIds, nowMs],
+  );
+
+  const openThread = useCallback((threadId: string) => {
+    router.push({ pathname: "/thread/[id]", params: { id: threadId } });
+  }, []);
+
+  const startThread = useCallback(() => {
+    const projects = shell.projects;
+    if (projects.length === 0) return;
+    if (projects.length > 1) {
+      router.push("/new-thread");
+      return;
+    }
+    const only = projects[0];
+    if (!only) return;
+    void createThread(only.id).then((threadId) => {
+      if (threadId) router.push({ pathname: "/thread/[id]", params: { id: threadId } });
+    });
+  }, [createThread, shell.projects]);
+
+  const headerRight = useCallback(
+    () => (
+      <View style={[styles.headerActions, { gap: theme.spacing.lg }]}>
+        <IconButton
+          name="settings-outline"
+          accessibilityLabel="Settings"
+          size={20}
+          tone="secondary"
+          onPress={() => router.push("/settings")}
+        />
+        <IconButton
+          name="create-outline"
+          accessibilityLabel="New thread"
+          busy={creatingThread}
+          disabled={connection.status !== "connected" || shell.projects.length === 0}
+          onPress={startThread}
+        />
+      </View>
+    ),
+    [connection.status, creatingThread, shell.projects.length, startThread, theme.spacing.lg],
+  );
+
+  // Rebuilding this object on every keystroke makes the native search bar drop
+  // focus, so it is memoised on the handler identity alone.
+  const searchBarOptions = useMemo(
+    () => ({
+      placeholder: "Search threads",
+      hideWhenScrolling: false,
+      onChangeText: (event: { nativeEvent: { text: string } }) => {
+        setQuery(event.nativeEvent.text);
+      },
+      onCancelButtonPress: () => setQuery(""),
+    }),
+    [],
+  );
+
+  if (!hydrated) {
     return (
-      <QrScanner
-        onCancel={() => setScanning(false)}
-        onScanned={(value) => {
-          setScanning(false);
-          setPairingUrl(value);
-          void connectWithPairingUrl(value);
-        }}
-      />
+      <Screen>
+        <Stack.Screen options={{ headerShown: false }} />
+        <SkeletonThreadList />
+      </Screen>
     );
   }
 
+  if (!baseUrl) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <ConnectView variant="welcome" />
+      </>
+    );
+  }
+
+  const waitingForFirstSnapshot =
+    shell.snapshotSequence === 0 && connection.status !== "connected" && sections.length === 0;
+
   return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-      <StatusPill status={connection.status} />
-      {baseUrl ? <Text style={styles.muted}>Paired with {baseUrl}</Text> : null}
-      {connection.lastError ? <Text style={styles.error}>{connection.lastError}</Text> : null}
-      {pairingError ? <Text style={styles.error}>{pairingError}</Text> : null}
-
-      <Text style={styles.heading}>Pair with a Synara server</Text>
-      <Pressable style={styles.button} onPress={() => setScanning(true)}>
-        <Text style={styles.buttonLabel}>Scan QR</Text>
-      </Pressable>
-
-      <Text style={styles.label}>Pairing URL</Text>
-      <TextInput
-        style={styles.input}
-        value={pairingUrl}
-        onChangeText={setPairingUrl}
-        placeholder="http://100.x.y.z:3775/pair#token=..."
-        placeholderTextColor={colors.muted}
-        autoCapitalize="none"
-        autoCorrect={false}
+    // No safe-area edges: the list itself insets for the header, the search bar
+    // and the home indicator via `contentInsetAdjustmentBehavior`, and doing it
+    // twice leaves a dead band at the bottom.
+    <Screen edges={NO_EDGES}>
+      {/* `headerShown` is restated here because the gate branches above turn it
+          off via setOptions, and that sticks to the route once applied. */}
+      <Stack.Screen
+        options={{ headerShown: true, headerRight, headerSearchBarOptions: searchBarOptions }}
       />
-      <Pressable
-        style={styles.button}
-        disabled={pairingBusy || pairingUrl.trim().length === 0}
-        onPress={() => void connectWithPairingUrl(pairingUrl)}
-      >
-        <Text style={styles.buttonLabel}>Pair</Text>
-      </Pressable>
-
-      <Text style={styles.heading}>Or use an existing session token</Text>
-      <Text style={styles.label}>Server</Text>
-      <TextInput
-        style={styles.input}
-        value={host}
-        onChangeText={setHost}
-        placeholder="http://100.x.y.z:3775"
-        placeholderTextColor={colors.muted}
-        autoCapitalize="none"
-        autoCorrect={false}
+      <SectionList
+        sections={sections}
+        keyExtractor={keyExtractor}
+        contentInsetAdjustmentBehavior="automatic"
+        stickySectionHeadersEnabled={false}
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={{
+          paddingHorizontal: theme.spacing.lg,
+          paddingBottom: theme.spacing.xxl,
+        }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void refreshShell()}
+            tintColor={theme.colors.textTertiary}
+          />
+        }
+        ListHeaderComponent={
+          <View style={{ gap: theme.spacing.sm, paddingTop: theme.spacing.sm }}>
+            <ConnectionBanner
+              connection={connection}
+              hasCredentials={baseUrl !== null}
+              onRetry={reconnectNow}
+              onRepair={() => router.push("/connect")}
+            />
+            {createThreadError ? (
+              <Text variant="footnote" color="danger">
+                {createThreadError}
+              </Text>
+            ) : null}
+          </View>
+        }
+        renderSectionHeader={({ section }) => (
+          <SectionHeader
+            title={section.title}
+            count={section.threadCount}
+            collapsed={section.collapsed}
+            onPress={() => toggleProjectCollapsed(section.id)}
+          />
+        )}
+        renderSectionFooter={({ section }) =>
+          section.collapsed || section.threadCount > 0 ? null : (
+            <Card>
+              <View style={{ padding: theme.spacing.lg }}>
+                <Text variant="footnote" color="tertiary">
+                  No threads in this project yet.
+                </Text>
+              </View>
+            </Card>
+          )
+        }
+        renderItem={({ item, index, section }) => {
+          const isFirst = index === 0;
+          const isLast = index === section.data.length - 1;
+          return (
+            <View
+              style={[
+                styles.group,
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border,
+                  borderTopWidth: isFirst ? StyleSheet.hairlineWidth : 0,
+                  borderBottomWidth: isLast ? StyleSheet.hairlineWidth : 0,
+                  borderTopLeftRadius: isFirst ? theme.radii.lg : 0,
+                  borderTopRightRadius: isFirst ? theme.radii.lg : 0,
+                  borderBottomLeftRadius: isLast ? theme.radii.lg : 0,
+                  borderBottomRightRadius: isLast ? theme.radii.lg : 0,
+                },
+              ]}
+            >
+              {isFirst ? null : (
+                <View
+                  style={[
+                    styles.seam,
+                    { backgroundColor: theme.colors.separator, marginLeft: theme.spacing.xl },
+                  ]}
+                />
+              )}
+              <ThreadRow row={item} onPress={openThread} />
+            </View>
+          );
+        }}
+        // Only reached when there are no sections at all: with a project
+        // present but no threads, the per-section footer says so instead.
+        ListEmptyComponent={
+          waitingForFirstSnapshot ? (
+            <SkeletonThreadList />
+          ) : query.trim().length > 0 ? (
+            <EmptyState
+              icon="search-outline"
+              title="No matches"
+              message={`Nothing matches “${query.trim()}”.`}
+            />
+          ) : (
+            <EmptyState
+              icon="folder-open-outline"
+              title="No projects yet"
+              message="Add a project in the Synara desktop or web app and it will show up here."
+            />
+          )
+        }
       />
-      <Text style={styles.label}>Session token</Text>
-      <TextInput
-        style={styles.input}
-        value={token}
-        onChangeText={setToken}
-        placeholder="eyJ2IjoxLCJr..."
-        placeholderTextColor={colors.muted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        secureTextEntry
-      />
-      <Pressable
-        style={styles.button}
-        disabled={pairingBusy || host.trim().length === 0 || token.trim().length === 0}
-        onPress={() => void connectWithSessionToken(host, token)}
-      >
-        <Text style={styles.buttonLabel}>Connect</Text>
-      </Pressable>
-
-      {pairingBusy ? <ActivityIndicator color={colors.accent} /> : null}
-
-      {baseUrl ? (
-        <Pressable style={styles.secondary} onPress={() => void disconnect()}>
-          <Text style={styles.secondaryLabel}>Forget this server</Text>
-        </Pressable>
-      ) : null}
-      <View style={{ height: spacing.lg }} />
-    </ScrollView>
+    </Screen>
   );
 }
 
+function keyExtractor(row: ThreadRowModel): string {
+  return row.id;
+}
+
+// Rows inside one project read as a single grouped card: only the first and
+// last corners are rounded, and the seams between them are hairlines.
 const styles = StyleSheet.create({
-  container: { padding: spacing.md, gap: spacing.sm, backgroundColor: colors.background },
-  heading: { color: colors.text, fontSize: 18, fontWeight: "600", marginTop: spacing.md },
-  label: { color: colors.muted, fontSize: 12, textTransform: "uppercase", letterSpacing: 1 },
-  muted: { color: colors.muted, fontSize: 13 },
-  error: { color: colors.danger, fontSize: 13 },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    color: colors.text,
-    padding: spacing.sm,
+  headerActions: { flexDirection: "row", alignItems: "center" },
+  group: {
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
   },
-  button: {
-    borderWidth: 1,
-    borderColor: colors.accent,
-    paddingVertical: spacing.sm,
-    alignItems: "center",
-  },
-  buttonLabel: { color: colors.accent, fontWeight: "600" },
-  secondary: { paddingVertical: spacing.sm, alignItems: "center" },
-  secondaryLabel: { color: colors.danger },
+  seam: { height: StyleSheet.hairlineWidth },
 });

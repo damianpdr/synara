@@ -192,3 +192,40 @@ describe("RpcSocket streams", () => {
     }
   });
 });
+
+describe("RpcSocket.ping", () => {
+  it("resolves true when a Pong arrives", async () => {
+    const { socket, ws } = makeSocket();
+    ws.fireOpen();
+    const pending = socket.ping(1_000);
+    expect(ws.framesOfTag("Ping")).toHaveLength(1);
+    ws.emit({ _tag: "Pong" });
+    await expect(pending).resolves.toBe(true);
+  });
+
+  it("resolves false when no Pong arrives inside the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const { socket, ws } = makeSocket();
+      ws.fireOpen();
+      const pending = socket.ping(3_000);
+      vi.advanceTimersByTime(3_001);
+      await expect(pending).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves false immediately on a socket that is not open", async () => {
+    const { socket } = makeSocket();
+    await expect(socket.ping(1_000)).resolves.toBe(false);
+  });
+
+  it("resolves false when the socket dies while probing", async () => {
+    const { socket, ws } = makeSocket();
+    ws.fireOpen();
+    const pending = socket.ping(10_000);
+    ws.drop();
+    await expect(pending).resolves.toBe(false);
+  });
+});

@@ -61,6 +61,11 @@ server's one-time pairing link (it is printed on startup and saved to
 token. See [How pairing works](#how-pairing-works) below. Once paired the
 threads list appears; tap a thread to open it.
 
+> Scan the pairing QR with the **Scan QR** button inside the app, not with the
+> iPhone Camera app. The link is single-use: if Camera opens it in Safari, the
+> web UI consumes the credential and the app is left with a dead link. Only the
+> Metro QR (step 3) is meant for the Camera app.
+
 ### 5. Smoke test the transport without a phone
 
 ```sh

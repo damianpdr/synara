@@ -93,7 +93,7 @@ You can also bind a specific interface (e.g. `--host "$(tailscale ip -4)"`) inst
 3. Get it onto the phone: generate a QR code from the link (e.g. `qrencode`, or any online generator on a trusted LAN) and scan it, or copy the link over a secure channel.
 4. Open it in the phone's browser for the web UI, or paste it into the **Synara mobile app** (`apps/mobile`), which consumes the same `/pair#token=...` link and then talks to the bearer/ws-token endpoints described above.
 
-Each link is single-use and expires in 5 minutes. To pair more devices later, mint a new credential from an owner session.
+Each link is single-use and expires in 5 minutes, so scan it with **one** consumer only: the phone's Camera app opens it in the browser and consumes it for a web session, while the mobile app's **Scan QR** button consumes it for the app. To pair more devices later, mint a new credential from an owner session (`POST /api/auth/pairing-token` returns `{ id, credential, expiresAt }`; the link is `<base>/pair#token=<credential>`).
 
 ## Synara.app (desktop) coexistence
 

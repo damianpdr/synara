@@ -80,6 +80,7 @@ type ShellRegistration = {
 type ThreadRegistration = {
   readonly threadId: ThreadId;
   readonly onItem: (item: OrchestrationThreadStreamItem) => void;
+  readonly onStreamError: ((error: SynaraRpcError) => void) | undefined;
   cursor: number | undefined;
   handle: StreamHandle | null;
 };
@@ -217,15 +218,24 @@ export class ConnectionManager {
     };
   }
 
+  /**
+   * `onStreamError` is only called for a *server rejection* of the subscribe
+   * (stream-capacity limit, unknown thread, permission) — the class of failure
+   * the reconnect loop will never fix on its own, so the screen has to say
+   * something. Transport failures and cursor invalidation are handled here and
+   * are deliberately not reported.
+   */
   subscribeThread(
     threadId: ThreadId,
     onItem: (item: OrchestrationThreadStreamItem) => void,
+    onStreamError?: (error: SynaraRpcError) => void,
   ): Subscription {
     const existing = this.threads.get(threadId);
     existing?.handle?.close();
     const registration: ThreadRegistration = {
       threadId,
       onItem,
+      onStreamError,
       // Reuse the previous cursor only if it was captured against the server
       // instance we are still talking to; instance changes clear the whole map.
       cursor: existing?.cursor,
@@ -460,11 +470,16 @@ export class ConnectionManager {
         },
         onError: (error) => {
           registration.handle = null;
-          if (!this.shouldRestartStream(error)) return;
-          // RESNAPSHOT/STALLED means the cursor is no longer serviceable; drop
-          // it and restart from a full snapshot without touching the socket.
-          registration.cursor = undefined;
-          this.openThreadStream(registration);
+          if (this.shouldRestartStream(error)) {
+            // RESNAPSHOT/STALLED means the cursor is no longer serviceable; drop
+            // it and restart from a full snapshot without touching the socket.
+            registration.cursor = undefined;
+            this.openThreadStream(registration);
+            return;
+          }
+          // Anything else the server named is terminal for this stream: without
+          // this the screen sits on "Loading thread…" with no explanation.
+          if (error instanceof SynaraRpcError) registration.onStreamError?.(error);
         },
         onDone: () => {
           registration.handle = null;

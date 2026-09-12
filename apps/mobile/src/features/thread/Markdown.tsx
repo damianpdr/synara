@@ -34,7 +34,14 @@ import {
   type InlineNode,
   type MarkdownBlock,
 } from "@/features/thread/logic/markdown";
-import { colors, fontSize, MONO_FONT, radius, spacing, threadColors } from "./threadTheme";
+import {
+  fontSize,
+  MONO_FONT,
+  radius,
+  spacing,
+  useThreadTokens,
+  type ThreadTokens,
+} from "./threadTheme";
 
 function openLink(href: string): void {
   // `canOpenURL` needs LSApplicationQueriesSchemes for custom schemes, which
@@ -49,6 +56,8 @@ function InlineRun({
   readonly nodes: readonly InlineNode[];
   readonly style?: StyleProp<TextStyle>;
 }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   return (
     <Text style={style}>
       {nodes.map((node, index) => {
@@ -85,6 +94,8 @@ export function CodeBlock({
   readonly text: string;
   readonly language: string | null;
 }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   const [copied, setCopied] = useState(false);
   const copy = (): void => {
     void Clipboard.setStringAsync(text);
@@ -105,7 +116,7 @@ export function CodeBlock({
           <Ionicons
             name={copied ? "checkmark" : "copy-outline"}
             size={14}
-            color={copied ? threadColors.attention : colors.muted}
+            color={copied ? t.threadColors.attention : t.colors.muted}
           />
         </Pressable>
       </View>
@@ -131,6 +142,8 @@ function TableBlockView({
   readonly header: readonly (readonly InlineNode[])[];
   readonly rows: readonly (readonly (readonly InlineNode[])[])[];
 }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   // Tables can be arbitrarily wide; a horizontal scroller beats squeezing every
   // column into a phone width. Fixed-width cells keep the columns aligned
   // without a two-pass measure.
@@ -165,6 +178,8 @@ function Blocks({
   readonly blocks: readonly MarkdownBlock[];
   readonly depth: number;
 }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   return (
     <>
       {blocks.map((block, index) => {
@@ -174,7 +189,7 @@ function Blocks({
               <InlineRun
                 key={index}
                 nodes={block.nodes}
-                style={[styles.heading, HEADING_STYLES[block.level]]}
+                style={[styles.heading, styles[HEADING_STYLE_KEY[block.level]]]}
               />
             );
           case "paragraph":
@@ -226,6 +241,8 @@ function Blocks({
  * re-renders on every delta, and re-lexing an unchanged message is pure waste.
  */
 export const Markdown = memo(function Markdown({ text }: { readonly text: string }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
   if (blocks.length === 0) return null;
   return (
@@ -235,83 +252,100 @@ export const Markdown = memo(function Markdown({ text }: { readonly text: string
   );
 });
 
-const HEADING_STYLES = {
-  1: { fontSize: fontSize.heading },
-  2: { fontSize: fontSize.title },
-  3: { fontSize: fontSize.body + 1 },
-  4: { fontSize: fontSize.body },
-  5: { fontSize: fontSize.small },
-  6: { fontSize: fontSize.small, color: colors.muted },
-} as const;
+function makeStyles(t: ThreadTokens) {
+  return StyleSheet.create({
+    root: { gap: spacing.sm },
+    paragraph: { color: t.colors.text, fontSize: fontSize.body, lineHeight: 22 },
+    heading: { color: t.colors.text, fontWeight: "700", marginTop: spacing.xs },
+    heading1: { fontSize: fontSize.heading },
+    heading2: { fontSize: fontSize.title },
+    heading3: { fontSize: fontSize.body + 1 },
+    heading4: { fontSize: fontSize.body },
+    heading5: { fontSize: fontSize.small },
+    heading6: { fontSize: fontSize.small, color: t.colors.muted },
+    bold: { fontWeight: "700" },
+    italic: { fontStyle: "italic" },
+    strikethrough: { textDecorationLine: "line-through", color: t.colors.muted },
+    link: { color: t.threadColors.link, textDecorationLine: "underline" },
+    inlineCode: {
+      fontFamily: MONO_FONT,
+      fontSize: fontSize.small,
+      color: t.threadColors.attention,
+      backgroundColor: t.threadColors.codeBackground,
+    },
+    codeBlock: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.md,
+      backgroundColor: t.threadColors.codeBackground,
+      overflow: "hidden",
+    },
+    codeHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: t.colors.border,
+    },
+    codeLanguage: {
+      color: t.colors.muted,
+      fontSize: fontSize.micro,
+      letterSpacing: 1,
+      textTransform: "uppercase",
+    },
+    codeScroll: { padding: spacing.sm },
+    codeText: {
+      fontFamily: MONO_FONT,
+      fontSize: fontSize.small,
+      color: t.colors.text,
+      lineHeight: 19,
+    },
+    rule: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: t.colors.border,
+      marginVertical: spacing.xs,
+    },
+    blockquote: {
+      borderLeftWidth: 3,
+      borderLeftColor: t.colors.border,
+      paddingLeft: spacing.sm,
+      gap: spacing.sm,
+    },
+    list: { gap: spacing.xs },
+    listItem: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" },
+    listMarker: { color: t.colors.muted, fontSize: fontSize.body, lineHeight: 22, minWidth: 18 },
+    listBody: { flex: 1, gap: spacing.xs },
+    tableScroll: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.sm,
+    },
+    table: { minWidth: "100%" },
+    tableRow: { flexDirection: "row" },
+    tableHeaderRow: {
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: t.colors.border,
+    },
+    tableCell: {
+      width: 132,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      borderRightWidth: StyleSheet.hairlineWidth,
+      borderRightColor: t.colors.border,
+    },
+    tableHeaderText: { color: t.colors.text, fontSize: fontSize.small, fontWeight: "700" },
+    tableText: { color: t.colors.text, fontSize: fontSize.small },
+  });
+}
 
-const styles = StyleSheet.create({
-  root: { gap: spacing.sm },
-  paragraph: { color: colors.text, fontSize: fontSize.body, lineHeight: 22 },
-  heading: { color: colors.text, fontWeight: "700", marginTop: spacing.xs },
-  bold: { fontWeight: "700" },
-  italic: { fontStyle: "italic" },
-  strikethrough: { textDecorationLine: "line-through", color: colors.muted },
-  link: { color: threadColors.link, textDecorationLine: "underline" },
-  inlineCode: {
-    fontFamily: MONO_FONT,
-    fontSize: fontSize.small,
-    color: threadColors.attention,
-    backgroundColor: threadColors.codeBackground,
-  },
-  codeBlock: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: threadColors.codeBackground,
-    overflow: "hidden",
-  },
-  codeHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  codeLanguage: {
-    color: colors.muted,
-    fontSize: fontSize.micro,
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-  codeScroll: { padding: spacing.sm },
-  codeText: { fontFamily: MONO_FONT, fontSize: fontSize.small, color: colors.text, lineHeight: 19 },
-  rule: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.border,
-    marginVertical: spacing.xs,
-  },
-  blockquote: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.border,
-    paddingLeft: spacing.sm,
-    gap: spacing.sm,
-  },
-  list: { gap: spacing.xs },
-  listItem: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" },
-  listMarker: { color: colors.muted, fontSize: fontSize.body, lineHeight: 22, minWidth: 18 },
-  listBody: { flex: 1, gap: spacing.xs },
-  tableScroll: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-  },
-  table: { minWidth: "100%" },
-  tableRow: { flexDirection: "row" },
-  tableHeaderRow: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
-  tableCell: {
-    width: 132,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: colors.border,
-  },
-  tableHeaderText: { color: colors.text, fontSize: fontSize.small, fontWeight: "700" },
-  tableText: { color: colors.text, fontSize: fontSize.small },
-});
+/** Per-level heading size, resolved through the style sheet so it follows the theme. */
+const HEADING_STYLE_KEY = {
+  1: "heading1",
+  2: "heading2",
+  3: "heading3",
+  4: "heading4",
+  5: "heading5",
+  6: "heading6",
+} as const;

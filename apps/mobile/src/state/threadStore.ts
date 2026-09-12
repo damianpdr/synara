@@ -124,13 +124,25 @@ function openStream(threadId: ThreadId, lease: ThreadLease): void {
     }
   }
   lease.manager = manager;
-  lease.subscription = manager.subscribeThread(threadId, (item) => {
-    const details = useThreadStore.getState().details;
-    const current = details[threadId] ?? emptyThreadDetail;
-    useThreadStore.setState({
-      details: { ...details, [threadId]: applyThreadStreamItem(current, item) },
-    });
-  });
+  lease.subscription = manager.subscribeThread(
+    threadId,
+    (item) => {
+      const details = useThreadStore.getState().details;
+      const current = details[threadId] ?? emptyThreadDetail;
+      useThreadStore.setState({
+        details: { ...details, [threadId]: applyThreadStreamItem(current, item) },
+      });
+    },
+    (error) => {
+      // The manager only reports rejections it will not retry itself (stream
+      // capacity, unknown thread, permission). Surfacing it in the same toast
+      // the composer uses beats an indefinite "Loading thread…".
+      const errors = useThreadStore.getState().errors;
+      useThreadStore.setState({
+        errors: { ...errors, [threadId]: `Thread stream stopped: ${error.message}` },
+      });
+    },
+  );
 }
 
 export const useThreadStore = create<ThreadStoreState>((set, get) => {
@@ -383,7 +395,8 @@ export const useThreadStore = create<ThreadStoreState>((set, get) => {
 });
 
 /**
- * Rebinds live leases when the ConnectionManager instance changes.
+ * Rebinds live leases when the ConnectionManager instance changes, and releases
+ * them when it goes away.
  *
  * `retainThread` compares manager identity only at mount, which leaves two real
  * holes. A cold start deep-linked into a thread route (expo-router restores the
@@ -399,7 +412,26 @@ export const useThreadStore = create<ThreadStoreState>((set, get) => {
  */
 useSynaraStore.subscribe(() => {
   const manager = getConnectionManager();
-  if (manager === null) return;
+  if (manager === null) {
+    // `disconnect()` tore the manager down. Every lease is now bound to a dead
+    // socket, and the cached detail describes a server this device is no longer
+    // paired with — leaving it up would let a re-pair to a *different* server
+    // repaint the old transcript for a frame. Drafts survive: they are the
+    // user's own unsent text, not server state.
+    for (const lease of leases.values()) {
+      if (lease.subscription === null && lease.manager === null) continue;
+      lease.subscription?.close();
+      lease.subscription = null;
+      lease.manager = null;
+    }
+    // Guarded so this does not churn on every unrelated shell-store update
+    // while the app sits unpaired.
+    const state = useThreadStore.getState();
+    if (Object.keys(state.details).length > 0 || Object.keys(state.diffs).length > 0) {
+      useThreadStore.setState({ details: {}, diffs: {} });
+    }
+    return;
+  }
   for (const [threadId, lease] of leases) {
     if (lease.refCount === 0 || lease.manager === manager) continue;
     lease.subscription?.close();

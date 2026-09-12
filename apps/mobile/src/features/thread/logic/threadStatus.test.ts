@@ -1,5 +1,6 @@
 // FILE: threadStatus.test.ts
-// Purpose: Header status derivation and the latest-turn diff range.
+// Purpose: Turn-running predicate, the latest-turn diff range, and the header's
+//          agreement with the threads list about status.
 // Layer: Mobile thread logic (tests)
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -8,7 +9,8 @@ import type { OrchestrationCheckpointSummary, OrchestrationLatestTurn } from "@s
 
 import { nextIso, resetClock, session } from "./fixtures.testutil";
 import { parseUnifiedDiff } from "./diff";
-import { deriveThreadStatus, isTurnRunning, latestTurnDiffRange } from "./threadStatus";
+import { isTurnRunning, latestTurnDiffRange } from "./threadStatus";
+import { deriveThreadStatus } from "@/features/shell/threadStatus";
 
 beforeEach(resetClock);
 
@@ -21,33 +23,51 @@ const runningTurn = {
   assistantMessageId: null,
 } as unknown as OrchestrationLatestTurn;
 
-describe("deriveThreadStatus", () => {
+// The thread header pill and the threads-list row both call the shell deriver.
+// These cases are the header's call shape; the rule table itself is covered by
+// src/features/shell/threadStatus.test.ts.
+describe("thread header status", () => {
   it("is idle with no session and nothing pending", () => {
-    expect(deriveThreadStatus({ session: null, latestTurn: null, pendingCount: 0 })).toBe("idle");
+    expect(deriveThreadStatus({ session: null, latestTurn: null })).toBe("idle");
   });
 
   it("is running while the session holds an active turn", () => {
     const active = session({ status: "running", activeTurnId: "turn-1" });
-    expect(deriveThreadStatus({ session: active, latestTurn: null, pendingCount: 0 })).toBe(
-      "running",
-    );
+    expect(deriveThreadStatus({ session: active, latestTurn: null })).toBe("running");
   });
 
-  it("prefers a pending prompt over running: the turn is blocked on the user", () => {
+  it("prefers a pending approval over running: the turn is blocked on the user", () => {
     const active = session({ status: "running", activeTurnId: "turn-1" });
-    expect(deriveThreadStatus({ session: active, latestTurn: runningTurn, pendingCount: 1 })).toBe(
-      "awaiting-approval",
-    );
+    expect(
+      deriveThreadStatus({
+        session: active,
+        latestTurn: runningTurn,
+        hasPendingApprovals: true,
+      }),
+    ).toBe("needs-approval");
   });
 
-  it("stops reporting awaiting-approval once the session can no longer answer", () => {
+  it("distinguishes a pending question from a pending approval", () => {
+    const active = session({ status: "running", activeTurnId: "turn-1" });
+    expect(
+      deriveThreadStatus({
+        session: active,
+        latestTurn: runningTurn,
+        hasPendingUserInput: true,
+      }),
+    ).toBe("needs-input");
+  });
+
+  it("stops reporting a pending prompt once the session can no longer answer", () => {
     const dead = session({ status: "error", lastError: "provider crashed" });
-    expect(deriveThreadStatus({ session: dead, latestTurn: null, pendingCount: 1 })).toBe("error");
+    expect(deriveThreadStatus({ session: dead, latestTurn: null, hasPendingApprovals: true })).toBe(
+      "error",
+    );
   });
 
   it("keeps a prompt actionable before the session snapshot arrives", () => {
-    expect(deriveThreadStatus({ session: null, latestTurn: null, pendingCount: 1 })).toBe(
-      "awaiting-approval",
+    expect(deriveThreadStatus({ session: null, latestTurn: null, hasPendingApprovals: true })).toBe(
+      "needs-approval",
     );
   });
 });

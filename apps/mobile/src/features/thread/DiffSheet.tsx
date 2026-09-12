@@ -29,15 +29,14 @@ import type { ThreadId } from "@synara/contracts";
 
 import { parseUnifiedDiff, type DiffLine } from "@/features/thread/logic/diff";
 import { useThreadStore } from "@/state/threadStore";
-import { colors, fontSize, MONO_FONT, radius, spacing, threadColors } from "./threadTheme";
-
-const LINE_STYLE: Record<DiffLine["kind"], object> = {
-  add: { color: threadColors.diffAdd, backgroundColor: threadColors.diffAddBackground },
-  remove: { color: threadColors.diffRemove, backgroundColor: threadColors.diffRemoveBackground },
-  hunk: { color: threadColors.diffHunk },
-  meta: { color: colors.muted },
-  context: { color: colors.text },
-};
+import {
+  fontSize,
+  MONO_FONT,
+  radius,
+  spacing,
+  useThreadTokens,
+  type ThreadTokens,
+} from "./threadTheme";
 
 export function DiffSheet({
   threadId,
@@ -57,6 +56,8 @@ export function DiffSheet({
     if (visible) void loadLatestTurnDiff(threadId);
   }, [visible, threadId, loadLatestTurnDiff]);
 
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   const sections = useMemo(() => parseUnifiedDiff(state?.diff ?? ""), [state?.diff]);
 
   return (
@@ -80,17 +81,17 @@ export function DiffSheet({
             accessibilityRole="button"
             accessibilityLabel="Close"
           >
-            <Ionicons name="close" size={22} color={colors.muted} />
+            <Ionicons name="close" size={22} color={t.colors.muted} />
           </Pressable>
         </View>
 
         {state?.status === "loading" ? (
           <View style={styles.centered}>
-            <ActivityIndicator color={colors.muted} />
+            <ActivityIndicator color={t.colors.muted} />
           </View>
         ) : state?.status === "error" ? (
           <View style={styles.centered}>
-            <Ionicons name="alert-circle-outline" size={28} color={colors.danger} />
+            <Ionicons name="alert-circle-outline" size={28} color={t.colors.danger} />
             <Text style={styles.errorText}>{state.error}</Text>
             <Pressable onPress={() => void loadLatestTurnDiff(threadId)} style={styles.retry}>
               <Text style={styles.retryLabel}>Retry</Text>
@@ -118,7 +119,7 @@ export function DiffSheet({
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View>
                     {section.lines.map((line, index) => (
-                      <Text key={index} style={[styles.line, LINE_STYLE[line.kind]]}>
+                      <Text key={index} style={[styles.line, styles[LINE_STYLE_KEY[line.kind]]]}>
                         {line.text.length === 0 ? " " : line.text}
                       </Text>
                     ))}
@@ -133,60 +134,84 @@ export function DiffSheet({
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  title: { color: colors.text, fontSize: fontSize.title, fontWeight: "700" },
-  range: { color: colors.muted, fontSize: fontSize.caption, marginRight: "auto" },
-  centered: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    padding: spacing.lg,
-  },
-  errorText: { color: colors.danger, fontSize: fontSize.small, textAlign: "center" },
-  emptyText: { color: colors.muted, fontSize: fontSize.small },
-  retry: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  retryLabel: { color: colors.text, fontSize: fontSize.small },
-  body: { padding: spacing.md, gap: spacing.md },
-  section: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    overflow: "hidden",
-  },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    backgroundColor: colors.surface,
-  },
-  sectionPath: { flex: 1, color: colors.text, fontSize: fontSize.caption, fontFamily: MONO_FONT },
-  sectionCounts: { fontSize: fontSize.caption },
-  addCount: { color: threadColors.diffAdd },
-  removeCount: { color: threadColors.diffRemove },
-  line: {
-    fontFamily: MONO_FONT,
-    fontSize: 11,
-    lineHeight: 16,
-    paddingHorizontal: spacing.sm,
-  },
-});
+function makeStyles(t: ThreadTokens) {
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: t.colors.background },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: t.colors.border,
+    },
+    title: { color: t.colors.text, fontSize: fontSize.title, fontWeight: "700" },
+    range: { color: t.colors.muted, fontSize: fontSize.caption, marginRight: "auto" },
+    centered: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: spacing.sm,
+      padding: spacing.lg,
+    },
+    errorText: { color: t.colors.danger, fontSize: fontSize.small, textAlign: "center" },
+    emptyText: { color: t.colors.muted, fontSize: fontSize.small },
+    retry: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    retryLabel: { color: t.colors.text, fontSize: fontSize.small },
+    body: { padding: spacing.md, gap: spacing.md },
+    section: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.md,
+      overflow: "hidden",
+    },
+    sectionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      backgroundColor: t.colors.surface,
+    },
+    sectionPath: {
+      flex: 1,
+      color: t.colors.text,
+      fontSize: fontSize.caption,
+      fontFamily: MONO_FONT,
+    },
+    sectionCounts: { fontSize: fontSize.caption },
+    addCount: { color: t.threadColors.diffAdd },
+    removeCount: { color: t.threadColors.diffRemove },
+    line: {
+      fontFamily: MONO_FONT,
+      fontSize: 11,
+      lineHeight: 16,
+      paddingHorizontal: spacing.sm,
+    },
+    lineAdd: { color: t.threadColors.diffAdd, backgroundColor: t.threadColors.diffAddBackground },
+    lineRemove: {
+      color: t.threadColors.diffRemove,
+      backgroundColor: t.threadColors.diffRemoveBackground,
+    },
+    lineHunk: { color: t.threadColors.diffHunk },
+    lineMeta: { color: t.colors.muted },
+    lineContext: { color: t.colors.text },
+  });
+}
+
+/** Per-line tone, resolved through the style sheet so it follows the theme. */
+const LINE_STYLE_KEY = {
+  add: "lineAdd",
+  remove: "lineRemove",
+  hunk: "lineHunk",
+  meta: "lineMeta",
+  context: "lineContext",
+} as const satisfies Record<DiffLine["kind"], string>;

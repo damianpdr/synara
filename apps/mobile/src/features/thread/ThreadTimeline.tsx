@@ -13,7 +13,7 @@
 // transcript is capped at a few hundred rows by the reducer, and FlatList needs
 // no extra dependency to verify under Expo Go.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Pressable,
@@ -27,7 +27,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import type { TimelineRow } from "@/features/thread/logic/timeline";
 import { TimelineRowView } from "./TimelineRowView";
-import { colors, fontSize, radius, spacing, threadColors } from "./threadTheme";
+import { fontSize, radius, spacing, useThreadTokens, type ThreadTokens } from "./threadTheme";
 
 /** How far from the newest row counts as "the user scrolled up to read". */
 const PINNED_THRESHOLD_PX = 80;
@@ -39,6 +39,8 @@ export function ThreadTimeline({
   readonly rows: readonly TimelineRow[];
   readonly emptyLabel: string;
 }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   const listRef = useRef<FlatList<TimelineRow>>(null);
   const [pinned, setPinned] = useState(true);
   const [unseen, setUnseen] = useState(false);
@@ -77,7 +79,7 @@ export function ThreadTimeline({
         <TimelineRowView row={item} />
       </View>
     ),
-    [],
+    [styles],
   );
 
   return (
@@ -103,7 +105,7 @@ export function ThreadTimeline({
       />
       {unseen ? (
         <Pressable onPress={jumpToNewest} style={styles.chip} accessibilityRole="button">
-          <Ionicons name="arrow-down" size={13} color={colors.background} />
+          <Ionicons name="arrow-down" size={13} color={t.threadColors.onAttention} />
           <Text style={styles.chipLabel}>New</Text>
         </Pressable>
       ) : null}
@@ -111,24 +113,26 @@ export function ThreadTimeline({
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  content: { paddingHorizontal: spacing.md, paddingVertical: spacing.md },
-  // Inverted lists render bottom-up, so the visual gap below a row is its top margin.
-  rowWrapper: { marginTop: spacing.md },
-  empty: { paddingVertical: spacing.lg, alignItems: "center", transform: [{ scaleY: -1 }] },
-  emptyText: { color: colors.muted, fontSize: fontSize.small },
-  chip: {
-    position: "absolute",
-    alignSelf: "center",
-    bottom: spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    backgroundColor: threadColors.attention,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-  },
-  chipLabel: { color: colors.background, fontSize: fontSize.caption, fontWeight: "700" },
-});
+function makeStyles(t: ThreadTokens) {
+  return StyleSheet.create({
+    root: { flex: 1 },
+    content: { paddingHorizontal: spacing.md, paddingVertical: spacing.md },
+    // Inverted lists render bottom-up, so the visual gap below a row is its top margin.
+    rowWrapper: { marginTop: spacing.md },
+    empty: { paddingVertical: spacing.lg, alignItems: "center", transform: [{ scaleY: -1 }] },
+    emptyText: { color: t.colors.muted, fontSize: fontSize.small },
+    chip: {
+      position: "absolute",
+      alignSelf: "center",
+      bottom: spacing.md,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.xs,
+      backgroundColor: t.threadColors.attention,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 6,
+    },
+    chipLabel: { color: t.threadColors.onAttention, fontSize: fontSize.caption, fontWeight: "700" },
+  });
+}

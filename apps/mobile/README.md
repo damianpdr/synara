@@ -1,8 +1,10 @@
 # @synara/mobile
 
-Expo (SDK 57) iOS client for Synara. **WP0 foundation spike**: it proves the
-protocol end to end — pair, authenticate, negotiate, open the WebSocket, drive
-the orchestration RPC/stream API, and render a live thread list on a phone.
+Expo (SDK 57) iOS client for Synara. It proves the protocol end to end — pair,
+authenticate, negotiate, open the WebSocket, drive the orchestration RPC/stream
+API — and puts a real surface on top of it: a live threads list and a thread
+screen with the transcript, approval/question prompts, a composer and the
+latest turn's diff.
 
 It runs in **Expo Go**. There are no custom native modules, no `expo-dev-client`,
 no push notifications, and no Xcode/CocoaPods/signing requirement.
@@ -51,10 +53,18 @@ Or use Tailscale on the phone. `--lan` advertises the Mac's _Wi-Fi_ address
 REACT_NATIVE_PACKAGER_HOSTNAME=100.109.152.38 bun run --cwd apps/mobile dev
 ```
 
-### 4. Smoke test the transport without a phone
+### 4. Pair the app with the server
+
+The app opens on the pairing view because nothing is stored yet. Scan the
+server's one-time pairing link (it is printed on startup and saved to
+`/tmp/synara-mobile-dev/pairing-url.txt`), or paste the base URL plus a session
+token. See [How pairing works](#how-pairing-works) below. Once paired the
+threads list appears; tap a thread to open it.
+
+### 5. Smoke test the transport without a phone
 
 ```sh
-bun apps/mobile/scripts/smoke.ts \
+bun run --cwd apps/mobile smoke -- \
   --base-url http://100.109.152.38:3775 \
   --session-token "$(cat /tmp/synara-mobile-dev/session-token.txt)"
 
@@ -163,14 +173,29 @@ connected → reconnecting` with full-jitter exponential backoff, fresh
 **Navigation.** One flat native stack. `app/index.tsx` is the main screen and
 also the gate: until `hydrate()` has read the keychain it renders a skeleton,
 and with nothing paired it renders the pairing view _in place_ rather than
-redirecting, so no empty thread list ever flashes. `/thread/[id]` keeps its
-path. Settings, Connect and the project picker are modals.
+redirecting, so no empty thread list ever flashes. `/thread/[id]` is pushed
+with `router.push({ pathname: "/thread/[id]", params: { id } })` and registered
+in `_layout.tsx` with `headerShown: false`, because that screen draws its own
+header; back falls through to `/` when there is no history to pop (deep link or
+notification). Settings, Connect and the project picker are modals.
 
 **Thread status.** `src/features/shell/threadStatus.ts` is a direct port of the
 web rules (`session-logic.ts`, `Sidebar.logic.ts`, `kanban.logic.ts`) so a
 thread never reads as "working" on the phone and "idle" in the browser. Order:
 pending approval → pending input → error → running → idle, and the list sorts
-by that rank before `updatedAt` desc.
+by that rank before `updatedAt` desc. The thread screen's header pill calls the
+_same_ function with the same labels and palette entries, so a thread cannot
+read one way in the list and another way once opened.
+`src/features/thread/logic/threadStatus.ts` keeps only the separate question
+"is there a turn I could interrupt", which drives the composer's Stop button.
+
+**Appearance.** `src/ui/tokens.ts` holds a light and a dark palette;
+`ThemeProvider` resolves one from the OS scheme and the Settings preference
+(system / light / dark), and `useTheme()` is the only way a component gets
+colour. The thread screen goes through `src/features/thread/threadTheme.ts`,
+which maps the flat names that feature was written against onto the same two
+palettes — its dark values are the ones it shipped with, its light values are
+derived from `lightPalette` rather than invented.
 
 **Lifecycle.** `useAppLifecycle` no longer drops the socket on `background`.
 iOS suspends the process in seconds and usually kills the socket anyway;
@@ -220,6 +245,13 @@ screen can render anything truthful in that state.
   `scripts/smoke.ts` proves the transport, but large-title/search-bar
   behaviour, haptics, the keychain migration, the camera and the
   background→probe timing have only been reasoned about.
+- **`expo-font` is not a direct dependency.** `@expo/vector-icons` peer-depends
+  on it and `expo-doctor` says so. Expo Go bundles `expo-font`, so the icons
+  render today; a dev build would need it added explicitly.
+- **`expo-doctor` reports duplicate native modules.** That is bun's isolated
+  linker showing the same version through several symlink paths, not several
+  installs. It is inert for Expo Go and for Metro, which resolves through the
+  workspace root.
 - **`app.json`'s `infoPlist` block is inert under Expo Go.** `NSAppTransportSecurity`
   and `NSCameraUsageDescription` only take effect in a build that has its own
   Info.plist. Expo Go's own plist governs instead — it does allow arbitrary
@@ -267,4 +299,13 @@ bun run --cwd apps/mobile test
 bunx oxlint apps/mobile
 bunx oxfmt --check apps/mobile
 bun run --cwd apps/mobile export:ios     # or: expo export -p ios --no-bytecode
+
+# against a running dev server (apps/mobile-dev/dev-server.sh, port 3775)
+bun run --cwd apps/mobile smoke -- \
+  --base-url http://100.109.152.38:3775 \
+  --session-token "$(cat /tmp/synara-mobile-dev/session-token.txt)"
 ```
+
+`bunx expo-doctor` passes 18/21. The three it flags are the TypeScript catalog
+pin, the `expo-font` peer dependency, and bun's isolated-linker symlinks — all
+explained under [Known gaps](#known-gaps-in-what-is-here).

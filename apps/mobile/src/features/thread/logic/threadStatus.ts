@@ -1,25 +1,23 @@
 // FILE: threadStatus.ts
-// Purpose: One label for "what is this thread doing right now", for the header pill.
+// Purpose: Turn-level predicates the thread screen needs beyond the shared status rules.
 // Layer: Mobile thread logic
-// Exports: ThreadActivityStatus, deriveThreadStatus, isTurnRunning, latestTurnDiffRange.
+// Exports: isSessionRunningTurn, isTurnRunning, latestTurnDiffRange.
+//
+// The *attention* status ("needs approval / needs input / error / running /
+// idle") is NOT derived here: `src/features/shell/threadStatus.ts` owns it, and
+// the thread header calls that so the header pill and the list row can never
+// disagree about the same thread. What is left here is the separate question
+// "is there a turn I could interrupt right now", which drives the composer's
+// Stop button, plus the checkpoint range the Changes sheet fetches.
 //
 // Rules ported from apps/web/src/session-logic.ts (isSessionRunningTurn,
-// isLatestTurnSettled, canSessionAnswerPendingRequests, derivePhase), collapsed
-// into the four states the phone header shows.
+// hasLiveLatestTurn).
 
 import type {
   OrchestrationCheckpointSummary,
   OrchestrationSession,
   OrchestrationLatestTurn,
 } from "@synara/contracts";
-
-export type ThreadActivityStatus = "running" | "awaiting-approval" | "error" | "idle";
-
-export interface DeriveThreadStatusInput {
-  readonly session: OrchestrationSession | null;
-  readonly latestTurn: OrchestrationLatestTurn | null;
-  readonly pendingCount: number;
-}
 
 /** A session is actively running a turn: status `running` *and* a live turn id. */
 export function isSessionRunningTurn(session: OrchestrationSession | null): boolean {
@@ -39,34 +37,6 @@ export function isTurnRunning(
   if (latestTurn === null) return false;
   return latestTurn.state === "running" && latestTurn.completedAt === null;
 }
-
-/**
- * A pending prompt is only actionable while the session that raised it can still
- * receive the answer; after a provider crash the thread must not read as
- * "awaiting approval" forever. A thread with no session yet keeps it actionable —
- * the flag can arrive ahead of the session snapshot.
- */
-export function canSessionAnswerPendingRequests(session: OrchestrationSession | null): boolean {
-  if (session === null) return true;
-  return session.status !== "stopped" && session.status !== "error";
-}
-
-export function deriveThreadStatus(input: DeriveThreadStatusInput): ThreadActivityStatus {
-  if (input.pendingCount > 0 && canSessionAnswerPendingRequests(input.session)) {
-    // An answerable prompt outranks "running": the turn is blocked on the user.
-    return "awaiting-approval";
-  }
-  if (input.session?.status === "error" || input.latestTurn?.state === "error") return "error";
-  if (isTurnRunning(input.session, input.latestTurn)) return "running";
-  return "idle";
-}
-
-export const THREAD_STATUS_LABELS: Record<ThreadActivityStatus, string> = {
-  running: "working",
-  "awaiting-approval": "needs you",
-  error: "error",
-  idle: "idle",
-};
 
 export interface TurnDiffRange {
   readonly fromTurnCount: number;

@@ -8,6 +8,7 @@
 // multiline input means Return inserts a newline — sending is the button only,
 // which is the right trade on a phone where Return is the obvious newline key.
 
+import { useMemo } from "react";
 import { StyleSheet, Text, TextInput, Pressable, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,7 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import type { ThreadId } from "@synara/contracts";
 
 import { useThreadStore } from "@/state/threadStore";
-import { colors, fontSize, radius, spacing, threadColors } from "./threadTheme";
+import { fontSize, radius, spacing, useThreadTokens, type ThreadTokens } from "./threadTheme";
 
 export function Composer({
   threadId,
@@ -31,6 +32,8 @@ export function Composer({
   const setDraft = useThreadStore((state) => state.setDraft);
   const sendMessage = useThreadStore((state) => state.sendMessage);
   const interruptTurn = useThreadStore((state) => state.interruptTurn);
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
 
   const canSend = connected && draft.trim().length > 0 && !sending;
 
@@ -59,7 +62,7 @@ export function Composer({
           value={draft}
           onChangeText={(value) => setDraft(threadId, value)}
           placeholder={connected ? "Message" : "Disconnected"}
-          placeholderTextColor={colors.muted}
+          placeholderTextColor={t.colors.muted}
           multiline
           blurOnSubmit={false}
           editable={connected}
@@ -79,7 +82,7 @@ export function Composer({
             accessibilityRole="button"
             accessibilityLabel="Stop the running turn"
           >
-            <Ionicons name="square" size={15} color={colors.background} />
+            <Ionicons name="square" size={15} color={t.colors.background} />
           </Pressable>
         ) : null}
         <Pressable
@@ -94,56 +97,62 @@ export function Composer({
           accessibilityLabel={turnRunning ? "Send after the current turn" : "Send"}
           accessibilityState={{ disabled: !canSend }}
         >
-          <Ionicons name="arrow-up" size={18} color={canSend ? colors.background : colors.muted} />
+          <Ionicons
+            name="arrow-up"
+            size={18}
+            color={canSend ? t.threadColors.onAttention : t.colors.muted}
+          />
         </Pressable>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  root: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.background,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-  },
-  queuedHint: {
-    color: colors.muted,
-    fontSize: fontSize.micro,
-    paddingBottom: spacing.xs,
-    paddingLeft: spacing.xs,
-  },
-  bar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm },
-  input: {
-    flex: 1,
-    minHeight: 40,
-    // Roughly six lines; beyond that the input scrolls instead of eating the list.
-    maxHeight: 140,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    color: colors.text,
-    fontSize: fontSize.body,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
-  },
-  button: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.pill,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  sendButton: { backgroundColor: threadColors.attention },
-  stopButton: { backgroundColor: colors.danger },
-  buttonDisabled: {
-    backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-  },
-  pressed: { opacity: 0.7 },
-});
+function makeStyles(t: ThreadTokens) {
+  return StyleSheet.create({
+    root: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: t.colors.border,
+      backgroundColor: t.colors.background,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+    },
+    queuedHint: {
+      color: t.colors.muted,
+      fontSize: fontSize.micro,
+      paddingBottom: spacing.xs,
+      paddingLeft: spacing.xs,
+    },
+    bar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm },
+    input: {
+      flex: 1,
+      minHeight: 40,
+      // Roughly six lines; beyond that the input scrolls instead of eating the list.
+      maxHeight: 140,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.lg,
+      backgroundColor: t.colors.surface,
+      color: t.colors.text,
+      fontSize: fontSize.body,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.sm,
+    },
+    button: {
+      width: 40,
+      height: 40,
+      borderRadius: radius.pill,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    sendButton: { backgroundColor: t.threadColors.attention },
+    stopButton: { backgroundColor: t.colors.danger },
+    buttonDisabled: {
+      backgroundColor: t.colors.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+    },
+    pressed: { opacity: 0.7 },
+  });
+}

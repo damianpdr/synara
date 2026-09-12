@@ -71,7 +71,11 @@ function RootChrome() {
             headerLargeTitleStyle: { color: theme.colors.text },
           }}
         />
-        <Stack.Screen name="thread/[id]" options={{ title: "Thread" }} />
+        {/* The thread screen renders its own header (status pill, branch,
+            Changes), so the native one is suppressed here rather than from
+            inside the route: a route-level `<Stack.Screen>` only lands after
+            the first paint, which flashed an empty "Thread" bar on every push. */}
+        <Stack.Screen name="thread/[id]" options={{ headerShown: false }} />
         <Stack.Screen
           name="connect/index"
           options={{ title: "Add connection", presentation: "modal" }}

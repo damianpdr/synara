@@ -10,7 +10,7 @@
 // Only the oldest prompt is shown. Concurrent prompts are rare, and stacking
 // full-width cards over a phone composer buries the input entirely.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -33,7 +33,14 @@ import {
   type PendingUserInput,
 } from "@/features/thread/logic/pendingInteractions";
 import { useThreadStore } from "@/state/threadStore";
-import { colors, fontSize, MONO_FONT, radius, spacing, threadColors } from "./threadTheme";
+import {
+  fontSize,
+  MONO_FONT,
+  radius,
+  spacing,
+  useThreadTokens,
+  type ThreadTokens,
+} from "./threadTheme";
 
 const KIND_PROMPT: Record<ApprovalRequestKind, string> = {
   command: "Run this command?",
@@ -74,6 +81,8 @@ function CardFrame({
   readonly count: number;
   readonly index: number;
 }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   return (
     <View style={styles.card}>
       {count > 1 ? (
@@ -95,6 +104,8 @@ function ActionButton({
   readonly disabled: boolean;
   readonly onPress: () => void;
 }) {
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   return (
     <Pressable
       onPress={onPress}
@@ -150,6 +161,8 @@ function ApprovalCard({
   // cannot); this mirrors it purely so the card can *look* answered. Without it
   // the buttons render enabled during the gap between the dispatch resolving and
   // the server echo, while the ref silently swallows taps.
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   const [submittedKey, setSubmittedKey] = useState<string | null>(null);
   useEffect(() => {
     if (submittedRef.current !== null && submittedRef.current !== submissionKey) {
@@ -186,7 +199,11 @@ function ApprovalCard({
   return (
     <CardFrame count={count} index={0}>
       <View style={styles.cardHeader}>
-        <Ionicons name={KIND_ICON[approval.requestKind]} size={15} color={threadColors.attention} />
+        <Ionicons
+          name={KIND_ICON[approval.requestKind]}
+          size={15}
+          color={t.threadColors.attention}
+        />
         <Text style={styles.cardTitle}>{KIND_PROMPT[approval.requestKind]}</Text>
         {parsed.tool !== null ? <Text style={styles.cardTool}>{parsed.tool}</Text> : null}
       </View>
@@ -204,7 +221,7 @@ function ApprovalCard({
       ) : null}
       {busy ? (
         <View style={styles.respondingRow}>
-          <ActivityIndicator size="small" color={colors.muted} />
+          <ActivityIndicator size="small" color={t.colors.muted} />
           <Text style={styles.respondingText}>responding…</Text>
         </View>
       ) : (
@@ -241,6 +258,8 @@ function UserInputCard({
   // until the durable settlement says another attempt is allowed.
   const submissionKey = `${pendingRequestInstanceKey(userInput.requestId, userInput.lifecycleGeneration)}|${userInput.responseAttemptKey ?? ""}`;
   const submittedRef = useRef<string | null>(null);
+  const t = useThreadTokens();
+  const styles = useMemo(() => makeStyles(t), [t]);
   const [submittedKey, setSubmittedKey] = useState<string | null>(null);
   useEffect(() => {
     if (submittedRef.current !== null && submittedRef.current !== submissionKey) {
@@ -299,7 +318,7 @@ function UserInputCard({
   return (
     <CardFrame count={count} index={0}>
       <View style={styles.cardHeader}>
-        <Ionicons name="help-circle-outline" size={15} color={threadColors.attention} />
+        <Ionicons name="help-circle-outline" size={15} color={t.threadColors.attention} />
         <Text style={styles.cardTitle}>Agent needs an answer</Text>
       </View>
       <ScrollView style={styles.questionScroll} keyboardShouldPersistTaps="handled">
@@ -334,7 +353,7 @@ function UserInputCard({
               <TextInput
                 style={styles.freeText}
                 placeholder="Type an answer"
-                placeholderTextColor={colors.muted}
+                placeholderTextColor={t.colors.muted}
                 value={answers[question.id]?.[0] ?? ""}
                 onChangeText={(value) => setFreeText(question.id, value)}
                 editable={!busy}
@@ -346,7 +365,7 @@ function UserInputCard({
       </ScrollView>
       {busy ? (
         <View style={styles.respondingRow}>
-          <ActivityIndicator size="small" color={colors.muted} />
+          <ActivityIndicator size="small" color={t.colors.muted} />
           <Text style={styles.respondingText}>responding…</Text>
         </View>
       ) : (
@@ -383,83 +402,91 @@ export function PendingInteractionCards({
   return null;
 }
 
-const styles = StyleSheet.create({
-  card: {
-    borderWidth: 1,
-    borderColor: threadColors.attention,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    padding: spacing.sm,
-    gap: spacing.sm,
-    marginHorizontal: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  counter: {
-    position: "absolute",
-    top: spacing.sm,
-    right: spacing.sm,
-    color: colors.muted,
-    fontSize: fontSize.micro,
-  },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  cardTitle: { color: colors.text, fontSize: fontSize.small, fontWeight: "700" },
-  cardTool: { color: colors.muted, fontSize: fontSize.caption },
-  detailBox: {
-    maxHeight: 96,
-    backgroundColor: threadColors.codeBackground,
-    borderRadius: radius.sm,
-  },
-  detailContent: { padding: spacing.sm },
-  detailText: { color: colors.text, fontFamily: MONO_FONT, fontSize: fontSize.small },
-  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
-  action: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  actionPrimary: { backgroundColor: threadColors.attention, borderColor: threadColors.attention },
-  actionDestructive: { borderColor: colors.danger },
-  actionDisabled: { opacity: 0.4 },
-  actionPressed: { opacity: 0.7 },
-  actionLabel: { color: colors.text, fontSize: fontSize.small, fontWeight: "600" },
-  actionLabelPrimary: { color: colors.background },
-  actionLabelDestructive: { color: colors.danger },
-  respondingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingVertical: spacing.xs,
-  },
-  respondingText: { color: colors.muted, fontSize: fontSize.small },
-  questionScroll: { maxHeight: 220 },
-  question: { gap: spacing.xs, marginBottom: spacing.sm },
-  questionHeader: {
-    color: colors.muted,
-    fontSize: fontSize.micro,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  questionText: { color: colors.text, fontSize: fontSize.small },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
-  chip: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-  },
-  chipSelected: { backgroundColor: threadColors.attention, borderColor: threadColors.attention },
-  chipLabel: { color: colors.text, fontSize: fontSize.small },
-  chipLabelSelected: { color: colors.background, fontWeight: "600" },
-  freeText: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.sm,
-    color: colors.text,
-    fontSize: fontSize.small,
-    padding: spacing.sm,
-    minHeight: 56,
-  },
-});
+function makeStyles(t: ThreadTokens) {
+  return StyleSheet.create({
+    card: {
+      borderWidth: 1,
+      borderColor: t.threadColors.attention,
+      borderRadius: radius.lg,
+      backgroundColor: t.colors.surface,
+      padding: spacing.sm,
+      gap: spacing.sm,
+      marginHorizontal: spacing.md,
+      marginBottom: spacing.sm,
+    },
+    counter: {
+      position: "absolute",
+      top: spacing.sm,
+      right: spacing.sm,
+      color: t.colors.muted,
+      fontSize: fontSize.micro,
+    },
+    cardHeader: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+    cardTitle: { color: t.colors.text, fontSize: fontSize.small, fontWeight: "700" },
+    cardTool: { color: t.colors.muted, fontSize: fontSize.caption },
+    detailBox: {
+      maxHeight: 96,
+      backgroundColor: t.threadColors.codeBackground,
+      borderRadius: radius.sm,
+    },
+    detailContent: { padding: spacing.sm },
+    detailText: { color: t.colors.text, fontFamily: MONO_FONT, fontSize: fontSize.small },
+    actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+    action: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    actionPrimary: {
+      backgroundColor: t.threadColors.attention,
+      borderColor: t.threadColors.attention,
+    },
+    actionDestructive: { borderColor: t.colors.danger },
+    actionDisabled: { opacity: 0.4 },
+    actionPressed: { opacity: 0.7 },
+    actionLabel: { color: t.colors.text, fontSize: fontSize.small, fontWeight: "600" },
+    actionLabelPrimary: { color: t.threadColors.onAttention },
+    actionLabelDestructive: { color: t.colors.danger },
+    respondingRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.xs,
+      paddingVertical: spacing.xs,
+    },
+    respondingText: { color: t.colors.muted, fontSize: fontSize.small },
+    questionScroll: { maxHeight: 220 },
+    question: { gap: spacing.xs, marginBottom: spacing.sm },
+    questionHeader: {
+      color: t.colors.muted,
+      fontSize: fontSize.micro,
+      textTransform: "uppercase",
+      letterSpacing: 1,
+    },
+    questionText: { color: t.colors.text, fontSize: fontSize.small },
+    chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+    chip: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 6,
+    },
+    chipSelected: {
+      backgroundColor: t.threadColors.attention,
+      borderColor: t.threadColors.attention,
+    },
+    chipLabel: { color: t.colors.text, fontSize: fontSize.small },
+    chipLabelSelected: { color: t.threadColors.onAttention, fontWeight: "600" },
+    freeText: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: t.colors.border,
+      borderRadius: radius.sm,
+      color: t.colors.text,
+      fontSize: fontSize.small,
+      padding: spacing.sm,
+      minHeight: 56,
+    },
+  });
+}

@@ -319,6 +319,59 @@ describe("pending interaction reconciliation", () => {
     expect(pending.approvals[0]?.responseAttemptKey).toBeDefined();
   });
 
+  it("hands out a response attempt key for an uncertain settlement too", () => {
+    // `uncertain` means the dispatch failed with an unknown server-side outcome.
+    // The prompt stays answerable, so the card must re-arm exactly as it does
+    // for `retryable` — otherwise the only recovery is leaving the screen.
+    let detail = applyThreadDetailEvent(
+      threadDetailFromSnapshot(threadSnapshot({}, 0)),
+      activityEvent(
+        activity({
+          id: "a1",
+          kind: "approval.requested",
+          tone: "approval",
+          payload: approvalPayload("req-1"),
+        }),
+      ),
+    );
+    detail = applyThreadDetailEvent(
+      detail,
+      approvalResponseRequestedEvent({
+        requestId: "req-1",
+        lifecycleGeneration: "gen-1",
+        decision: "accept",
+        createdAt: nextIso(),
+      }),
+    );
+    const respondingKey = threadDetailPending(detail, nextIso()).approvals[0]?.responseAttemptKey;
+    const commandId = detail.pendingInteractions?.[0]?.responseCommandId;
+    detail = applyThreadDetailEvent(
+      detail,
+      activityEvent(
+        activity({
+          id: "a3",
+          kind: "provider.approval.respond.failed",
+          tone: "error",
+          payload: {
+            requestId: "req-1",
+            lifecycleGeneration: "gen-1",
+            responseCommandId: commandId,
+            settlementStatus: "uncertain",
+            detail: "socket closed before the response was acknowledged",
+          },
+        }),
+      ),
+    );
+    expect(detail.pendingInteractions?.[0]?.status).toBe("uncertain");
+    const pending = threadDetailPending(detail, nextIso());
+    expect(pending.approvals).toHaveLength(1);
+    const uncertainKey = pending.approvals[0]?.responseAttemptKey;
+    expect(uncertainKey).toBeDefined();
+    // The status is part of the key, so the transition re-arms the guard even
+    // though the response command id never changed.
+    expect(uncertainKey).not.toBe(respondingKey);
+  });
+
   it("treats an explicit stale-callback failure as terminal", () => {
     let detail = applyThreadDetailEvent(
       threadDetailFromSnapshot(threadSnapshot({}, 0)),

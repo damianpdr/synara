@@ -65,6 +65,9 @@ export function Composer({
           editable={connected}
           accessibilityLabel="Message"
         />
+        {/* Stop and Send coexist while a turn runs. Replacing Send with Stop
+            would make the queued-message hint a lie: there would be no way to
+            queue anything. Stop is the extra affordance, not a mode. */}
         {turnRunning ? (
           <Pressable
             onPress={onStop}
@@ -78,26 +81,21 @@ export function Composer({
           >
             <Ionicons name="square" size={15} color={colors.background} />
           </Pressable>
-        ) : (
-          <Pressable
-            onPress={onSend}
-            disabled={!canSend}
-            style={({ pressed }) => [
-              styles.button,
-              canSend ? styles.sendButton : styles.buttonDisabled,
-              pressed && canSend ? styles.pressed : null,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Send"
-            accessibilityState={{ disabled: !canSend }}
-          >
-            <Ionicons
-              name="arrow-up"
-              size={18}
-              color={canSend ? colors.background : colors.muted}
-            />
-          </Pressable>
-        )}
+        ) : null}
+        <Pressable
+          onPress={onSend}
+          disabled={!canSend}
+          style={({ pressed }) => [
+            styles.button,
+            canSend ? styles.sendButton : styles.buttonDisabled,
+            pressed && canSend ? styles.pressed : null,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={turnRunning ? "Send after the current turn" : "Send"}
+          accessibilityState={{ disabled: !canSend }}
+        >
+          <Ionicons name="arrow-up" size={18} color={canSend ? colors.background : colors.muted} />
+        </Pressable>
       </View>
     </View>
   );

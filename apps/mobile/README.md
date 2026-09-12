@@ -137,8 +137,11 @@ connected → reconnecting` with full-jitter exponential backoff, fresh
     resubscribe-with-cursors after a reconnect. `pause()`/`resume()` are
     AppState-agnostic; `app/_layout.tsx` is the only file that knows about iOS
     lifecycle.
-- `src/state/` — one zustand v5 store plus two pure projections (shell list,
-  thread messages).
+- `src/state/` — two zustand v5 stores over pure projections: `synaraStore`
+  (connection + shell list) and `threadStore` (per-thread detail, refcounted
+  stream leases with a 30s retention window, drafts, pending-interaction
+  responses, turn diffs). `threadProjection.ts` is the thread event reducer and
+  imports nothing from React.
 - `src/features/thread/` — the thread screen: a pure logic core
   (`logic/`: event reducer inputs, pending-interaction derivation, timeline row
   grouping, a `marked`-based markdown block model, unified-diff parsing — all

@@ -8,7 +8,7 @@
 // them together and owns the keyboard/safe-area layout.
 
 import { useEffect, useMemo, useState } from "react";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -78,12 +78,20 @@ export default function ThreadScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
+      {/* The root layout declares a native header for this route. This screen
+          renders its own (status pill, branch, Changes), so the native one is
+          suppressed here rather than in _layout.tsx — that file belongs to the
+          shell, and a route is entitled to override its own options. Also why
+          `keyboardVerticalOffset` is 0: there is no native header to clear. */}
+      <Stack.Screen options={{ headerShown: false }} />
       <ThreadHeader
         title={detail.title ?? threadId}
         branch={detail.branch}
         status={status}
         disconnected={!connected}
-        onBack={() => router.back()}
+        // A notification or deep link can mount this route with no history, in
+        // which case `back()` is a no-op and the screen becomes a dead end.
+        onBack={() => (router.canGoBack() ? router.back() : router.replace("/threads"))}
         onOpenChanges={() => setDiffOpen(true)}
         changesEnabled={connected && latestTurnDiffRange(detail.checkpoints) !== null}
       />
@@ -91,8 +99,8 @@ export default function ThreadScreen() {
       <KeyboardAvoidingView
         style={styles.body}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        // Clears the header so the composer lands just above the keyboard.
-        keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+        // No native header above this view, so nothing to offset past.
+        keyboardVerticalOffset={0}
       >
         <ThreadTimeline
           rows={rows}

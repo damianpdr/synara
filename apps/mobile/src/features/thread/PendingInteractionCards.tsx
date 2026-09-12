@@ -138,13 +138,26 @@ function ApprovalCard({
   // One-shot guard keyed on the request *instance* plus its retry attempt, so a
   // double tap cannot double-answer but a server-side retryable failure re-arms
   // the card. Mirrors ComposerPendingApprovalPanel's submittedRequestKeyRef.
+  //
+  // This ref — not `responding` — is what prevents a double submit. `responding`
+  // is in-flight only (see threadStore.respondToApproval); between the dispatch
+  // resolving and the server echo the buttons come back, and the ref holds the
+  // line until the durable state either resolves the prompt or hands out a new
+  // `responseAttemptKey`.
   const submissionKey = `${pendingRequestInstanceKey(approval.requestId, approval.lifecycleGeneration)}|${approval.responseAttemptKey ?? ""}`;
   const submittedRef = useRef<string | null>(null);
+  // The ref is the guard (it wins races within a single frame, which state
+  // cannot); this mirrors it purely so the card can *look* answered. Without it
+  // the buttons render enabled during the gap between the dispatch resolving and
+  // the server echo, while the ref silently swallows taps.
+  const [submittedKey, setSubmittedKey] = useState<string | null>(null);
   useEffect(() => {
     if (submittedRef.current !== null && submittedRef.current !== submissionKey) {
       submittedRef.current = null;
     }
+    setSubmittedKey((current) => (current === submissionKey ? current : null));
   }, [submissionKey]);
+  const busy = responding || submittedKey === submissionKey;
 
   const actions =
     approval.sessionApprovalAvailable === false
@@ -152,8 +165,9 @@ function ApprovalCard({
       : APPROVAL_ACTIONS;
 
   const respond = (decision: ProviderApprovalDecision): void => {
-    if (responding || submittedRef.current === submissionKey) return;
+    if (busy || submittedRef.current === submissionKey) return;
     submittedRef.current = submissionKey;
+    setSubmittedKey(submissionKey);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     void respondToApproval({
       threadId,
@@ -162,7 +176,9 @@ function ApprovalCard({
       decision,
     }).then((ok) => {
       // A rejected dispatch is still retryable; release the claim.
-      if (!ok && submittedRef.current === submissionKey) submittedRef.current = null;
+      if (ok || submittedRef.current !== submissionKey) return;
+      submittedRef.current = null;
+      setSubmittedKey(null);
     });
   };
 
@@ -186,7 +202,7 @@ function ApprovalCard({
           </Text>
         </ScrollView>
       ) : null}
-      {responding ? (
+      {busy ? (
         <View style={styles.respondingRow}>
           <ActivityIndicator size="small" color={colors.muted} />
           <Text style={styles.respondingText}>responding…</Text>
@@ -197,7 +213,7 @@ function ApprovalCard({
             <ActionButton
               key={spec.decision}
               spec={spec}
-              disabled={responding}
+              disabled={false}
               onPress={() => respond(spec.decision)}
             />
           ))}
@@ -220,6 +236,20 @@ function UserInputCard({
   const responding = useThreadStore((state) => state.responding[userInput.requestId] === true);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
 
+  // Same one-shot guard as ApprovalCard, for the same reason: `responding` only
+  // covers the dispatch itself, so the ref is what makes submission idempotent
+  // until the durable settlement says another attempt is allowed.
+  const submissionKey = `${pendingRequestInstanceKey(userInput.requestId, userInput.lifecycleGeneration)}|${userInput.responseAttemptKey ?? ""}`;
+  const submittedRef = useRef<string | null>(null);
+  const [submittedKey, setSubmittedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (submittedRef.current !== null && submittedRef.current !== submissionKey) {
+      submittedRef.current = null;
+    }
+    setSubmittedKey((current) => (current === submissionKey ? current : null));
+  }, [submissionKey]);
+  const busy = responding || submittedKey === submissionKey;
+
   const toggle = (questionId: string, label: string, multiSelect: boolean): void => {
     void Haptics.selectionAsync();
     setAnswers((current) => {
@@ -241,7 +271,9 @@ function UserInputCard({
   const answered = userInput.questions.every((question) => (answers[question.id] ?? []).length > 0);
 
   const submit = (): void => {
-    if (responding || !answered) return;
+    if (busy || !answered || submittedRef.current === submissionKey) return;
+    submittedRef.current = submissionKey;
+    setSubmittedKey(submissionKey);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const payload: Record<string, string | string[]> = {};
     for (const question of userInput.questions) {
@@ -256,6 +288,11 @@ function UserInputCard({
       requestId: userInput.requestId,
       lifecycleGeneration: userInput.lifecycleGeneration,
       answers: payload,
+    }).then((ok) => {
+      // A rejected dispatch is still retryable; release the claim.
+      if (ok || submittedRef.current !== submissionKey) return;
+      submittedRef.current = null;
+      setSubmittedKey(null);
     });
   };
 
@@ -280,7 +317,7 @@ function UserInputCard({
                       onPress={() =>
                         toggle(question.id, option.label, question.multiSelect === true)
                       }
-                      disabled={responding}
+                      disabled={busy}
                       accessibilityRole="button"
                       accessibilityState={{ selected }}
                       style={[styles.chip, selected ? styles.chipSelected : null]}
@@ -300,14 +337,14 @@ function UserInputCard({
                 placeholderTextColor={colors.muted}
                 value={answers[question.id]?.[0] ?? ""}
                 onChangeText={(value) => setFreeText(question.id, value)}
-                editable={!responding}
+                editable={!busy}
                 multiline
               />
             )}
           </View>
         ))}
       </ScrollView>
-      {responding ? (
+      {busy ? (
         <View style={styles.respondingRow}>
           <ActivityIndicator size="small" color={colors.muted} />
           <Text style={styles.respondingText}>responding…</Text>

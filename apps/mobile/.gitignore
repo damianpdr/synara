@@ -1,0 +1,14 @@
+# Expo / React Native build + tooling output (all regenerated locally).
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Generated native projects (this app is Expo Go only; never commit these).
+/ios
+/android
+
+.metro-health-check*
+*.tsbuildinfo
+.DS_Store

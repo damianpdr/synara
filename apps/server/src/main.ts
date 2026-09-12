@@ -57,6 +57,7 @@ import { ProviderRuntimeReconcilerLive } from "./provider/Layers/ProviderRuntime
 import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { ServerSettingsService } from "./serverSettings";
+import { selectReachableIpv4Address } from "./reachableAddress";
 import { formatHostForUrl, isLoopbackHost, isWildcardHost } from "./startupAccess";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { startThreadRetentionJob } from "./threadRetention";
@@ -414,7 +415,16 @@ const makeServerProgram = (input: CliInput) =>
       config.host && !isWildcardHost(config.host)
         ? `http://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
-    const pairingBaseUrl = config.publicUrl?.origin ?? bindUrl;
+    // A wildcard bind has no single dialable host, so the pairing link picks
+    // the best non-loopback IPv4 on the machine (Tailscale first, then LAN);
+    // localhost only remains when there is no external interface at all.
+    const reachablePairingHost =
+      isWildcardHost(config.host) && !config.publicUrl
+        ? selectReachableIpv4Address(OS.networkInterfaces())
+        : null;
+    const pairingBaseUrl =
+      config.publicUrl?.origin ??
+      (reachablePairingHost ? `http://${reachablePairingHost}:${config.port}` : bindUrl);
     const startupPairingUrl =
       config.publicUrl || !isLoopbackHost(config.host)
         ? yield* serverAuth.issueStartupPairingUrl(pairingBaseUrl).pipe(
@@ -484,7 +494,7 @@ const makeServerProgram = (input: CliInput) =>
         {
           pairingUrl: startupPairingUrl,
           hint:
-            isWildcardHost(config.host) && !config.publicUrl
+            isWildcardHost(config.host) && !config.publicUrl && reachablePairingHost === null
               ? "Replace localhost in this one-time URL with the server's reachable hostname or IP."
               : "Open this one-time URL to establish the first owner session.",
         },

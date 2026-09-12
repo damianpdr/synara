@@ -7,7 +7,12 @@
     "bun.lock",
     "*.tsbuildinfo",
     "**/routeTree.gen.ts",
-    ".synara-*"
+    ".synara-*",
+    "apps/mobile/.expo",
+    "apps/mobile/ios",
+    "apps/mobile/android",
+    "apps/mobile/dist",
+    "apps/mobile/expo-env.d.ts"
   ],
   "plugins": ["eslint", "oxc", "react", "unicorn", "typescript"],
   "categories": {

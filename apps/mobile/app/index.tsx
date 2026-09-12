@@ -27,6 +27,8 @@ import { useTheme } from "@/ui/ThemeProvider";
 /** Relative timestamps only need to be refreshed about as often as they change. */
 const CLOCK_TICK_MS = 30_000;
 
+const NO_EDGES = [] as const;
+
 export default function ThreadsScreen() {
   const theme = useTheme();
   const hydrated = useSynaraStore((state) => state.hydrated);
@@ -140,7 +142,10 @@ export default function ThreadsScreen() {
     shell.snapshotSequence === 0 && connection.status !== "connected" && sections.length === 0;
 
   return (
-    <Screen>
+    // No safe-area edges: the list itself insets for the header, the search bar
+    // and the home indicator via `contentInsetAdjustmentBehavior`, and doing it
+    // twice leaves a dead band at the bottom.
+    <Screen edges={NO_EDGES}>
       {/* `headerShown` is restated here because the gate branches above turn it
           off via setOptions, and that sticks to the route once applied. */}
       <Stack.Screen

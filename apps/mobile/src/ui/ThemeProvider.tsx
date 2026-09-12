@@ -1,9 +1,9 @@
 // FILE: ThemeProvider.tsx
 // Purpose: Resolve the active theme from the OS scheme + the user's preference.
 // Layer: Mobile UI
-// Exports: ThemeProvider, useTheme, useThemedStyles.
+// Exports: ThemeProvider, useTheme, resolveScheme.
 
-import { createContext, use, useMemo, type ReactNode } from "react";
+import { createContext, use, type ReactNode } from "react";
 import { useColorScheme } from "react-native";
 
 import type { AppearancePreference } from "@/state/preferences";
@@ -36,16 +36,4 @@ export function ThemeProvider({
 
 export function useTheme(): Theme {
   return use(ThemeContext);
-}
-
-/**
- * `StyleSheet.create` is not free, and the theme object has exactly two stable
- * identities, so every themed component memoises its sheet on it.
- *
- * `factory` MUST be defined at module scope — an inline arrow is a new identity
- * every render and defeats the memo.
- */
-export function useThemedStyles<T>(factory: (theme: Theme) => T): T {
-  const theme = useTheme();
-  return useMemo(() => factory(theme), [theme, factory]);
 }

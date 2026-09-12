@@ -129,7 +129,6 @@ export function ConnectView({ variant, onConnected, onCancel }: ConnectViewProps
         <ScrollView
           contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.lg }}
           keyboardShouldPersistTaps="handled"
-          contentInsetAdjustmentBehavior="automatic"
         >
           {variant === "welcome" ? (
             <View style={{ gap: theme.spacing.sm, paddingTop: theme.spacing.xl }}>

@@ -195,6 +195,9 @@ export const useSynaraStore = create<SynaraStoreState>((set, get) => {
       set({ pairingBusy: true, pairingError: null, pairingHint: null });
       try {
         const baseUrl = normalizeBaseUrl(rawBaseUrl);
+        // A raw session token carries no role claim the client can trust; only
+        // the pairing exchange reports one.
+        set({ role: null });
         await saveCredentials({ baseUrl, sessionToken: sessionToken.trim() });
         startManager(baseUrl, sessionToken.trim());
         return true;

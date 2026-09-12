@@ -74,7 +74,6 @@ export default function SettingsScreen() {
           paddingHorizontal: theme.spacing.lg,
           paddingBottom: theme.spacing.xxl,
         }}
-        contentInsetAdjustmentBehavior="automatic"
       >
         <SectionHeader title="Connection" />
         <Card>

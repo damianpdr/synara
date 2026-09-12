@@ -149,7 +149,7 @@ connected → reconnecting` with full-jitter exponential backoff, fresh
 
 **Navigation.** One flat native stack. `app/index.tsx` is the main screen and
 also the gate: until `hydrate()` has read the keychain it renders a skeleton,
-and with nothing paired it renders the pairing view *in place* rather than
+and with nothing paired it renders the pairing view _in place_ rather than
 redirecting, so no empty thread list ever flashes. `/thread/[id]` keeps its
 path. Settings, Connect and the project picker are modals.
 
@@ -197,10 +197,10 @@ screen can render anything truthful in that state.
   fail again and re-report, but it is wasted work.
 - **`react-native-gesture-handler` cannot currently be imported.** Doing so
   pulls in the Worklets babel plugin, which fails against the monorepo's
-  hoisted `@babel/core` 8 (`Requires Babel "^7.0.0-0", but was loaded with
-  "8.0.1"`). Nothing in the shell needs it — the native stack's swipe-back and
-  the form sheet are native — but any screen that wants a pan/swipe gesture has
-  to resolve that first.
+  hoisted `@babel/core` 8: it reports that it requires Babel `^7.0.0-0` but was
+  loaded with `8.0.1`. Nothing in the shell needs it — the native stack's
+  swipe-back and the form sheet are native — but any screen that wants a
+  pan/swipe gesture has to resolve that first.
 - **The UI is unverified on a device.** There is no simulator or Xcode on this
   machine: `expo export -p ios` proves the bundle resolves and
   `scripts/smoke.ts` proves the transport, but large-title/search-bar

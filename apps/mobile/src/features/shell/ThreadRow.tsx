@@ -1,7 +1,7 @@
 // FILE: ThreadRow.tsx
 // Purpose: One thread in the list — status, title, branch, last activity.
 // Layer: Mobile shell feature
-// Exports: ThreadRow, THREAD_ROW_HEIGHT.
+// Exports: ThreadRow.
 
 import { memo } from "react";
 import { StyleSheet, View } from "react-native";
@@ -12,9 +12,6 @@ import { Chip, Dot } from "@/ui/Pill";
 import { PressableRow } from "@/ui/PressableRow";
 import { Text } from "@/ui/Text";
 import { useTheme } from "@/ui/ThemeProvider";
-
-/** Two-line worst case; only used as a `getItemLayout` hint, not a hard size. */
-export const THREAD_ROW_HEIGHT = 62;
 
 export interface ThreadRowProps {
   readonly row: ThreadRowModel;

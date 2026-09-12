@@ -57,10 +57,7 @@ export default function NewThreadSheet() {
 
   return (
     <Screen>
-      <ScrollView
-        contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md }}
-        contentInsetAdjustmentBehavior="automatic"
-      >
+      <ScrollView contentContainerStyle={{ padding: theme.spacing.lg, gap: theme.spacing.md }}>
         <Text variant="footnote" color="secondary">
           The new thread inherits the model and runtime mode of the most recent thread in the
           project you choose.

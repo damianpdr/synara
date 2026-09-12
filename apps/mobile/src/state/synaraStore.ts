@@ -367,3 +367,18 @@ function snapshotPreferences(state: SynaraStoreState): Preferences {
     collapsedProjectIds: state.collapsedProjectIds,
   };
 }
+
+/**
+ * The live ConnectionManager, or null while disconnected.
+ *
+ * Added by the thread-screen work (feat/mobile-thread) as the single new export
+ * on this file — deliberately appended at EOF so the merge is a pure addition.
+ * The thread store needs `dispatchCommand` (send / interrupt / approval
+ * responses) and `getTurnDiff`, and it owns its own subscription lifecycle
+ * (refcounted, with a retention window), none of which `watchThread` can
+ * express. Callers must NOT cache the result: `startManager` replaces the
+ * instance on re-pair, and a cached reference would dispatch into a dead socket.
+ */
+export function getConnectionManager(): ConnectionManager | null {
+  return manager;
+}

@@ -1,0 +1,706 @@
+// FILE: pendingInteractions.ts
+// Purpose: Derive actionable approval / user-input prompts from a thread snapshot
+//          and its activity log, and reconcile the durable settlement list.
+// Layer: Mobile thread logic
+// Exports: PendingApproval, PendingUserInput, ApprovalRequestKind,
+//          pendingRequestInstanceKey, approvalRequestKindFromRequestType,
+//          isPendingInteractionResponseClaimable, reconcilePendingInteractionsFromActivity,
+//          markInteractionResponding, derivePendingApprovals, derivePendingUserInputs,
+//          parseApprovalDetail.
+//
+// Ported (and trimmed) from:
+//   - apps/web/src/pendingInteractionDerivation.ts
+//   - apps/web/src/storeEventReducer.ts (reconcilePendingInteractionsFromActivity,
+//     markInteractionResponding)
+//   - packages/shared/src/threadSummary.ts (pendingRequestInstanceKey,
+//     approvalRequestKindFromRequestType, isStalePendingRequestFailureDetail)
+//   - packages/shared/src/pendingInteractions.ts (stale matcher, claim policy)
+//   - apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx (parseApprovalDetail)
+//
+// Copied rather than imported: `@synara/shared` and `@synara/contracts` are
+// Effect-based and are type-only dependencies of this app (see README).
+//
+// Deliberate v1 simplification: the web derivation has an "aggregate fallback"
+// path for servers that send only `hasPendingApprovals` booleans instead of
+// `thread.pendingInteractions[]`. The dev/test server sends the detailed list
+// (verified: `pendingInteractions=0`, present and empty), so this port keeps
+// only the detailed path and treats an absent list as "trust the replay".
+
+import type {
+  ApprovalRequestId,
+  OrchestrationPendingInteraction,
+  OrchestrationThreadActivity,
+  ProviderApprovalDecision,
+  ThreadId,
+  TurnId,
+  UserInputQuestion,
+} from "@synara/contracts";
+
+import { orderedActivities } from "./activityOrder";
+
+export type ApprovalRequestKind = "command" | "file-read" | "file-change" | "permissions";
+
+export interface PendingApproval {
+  readonly requestId: ApprovalRequestId;
+  readonly lifecycleGeneration?: string;
+  /** Changes only when the durable retryable response attempt changes. */
+  readonly responseAttemptKey?: string;
+  readonly requestKind: ApprovalRequestKind;
+  readonly createdAt: string;
+  readonly detail?: string;
+  readonly sessionApprovalAvailable?: boolean;
+}
+
+export interface PendingUserInput {
+  readonly requestId: ApprovalRequestId;
+  readonly lifecycleGeneration?: string;
+  /** Changes only when the durable state permits a new response attempt. */
+  readonly responseAttemptKey?: string;
+  readonly createdAt: string;
+  readonly questions: readonly UserInputQuestion[];
+}
+
+type InteractionKind = OrchestrationPendingInteraction["interactionKind"];
+
+export function pendingRequestInstanceKey(requestId: string, lifecycleGeneration?: string): string {
+  return `${requestId}\u0000${lifecycleGeneration ?? "legacy"}`;
+}
+
+export function approvalRequestKindFromRequestType(
+  requestType: unknown,
+): ApprovalRequestKind | null {
+  switch (requestType) {
+    case "command_execution_approval":
+    case "exec_command_approval":
+      return "command";
+    case "file_read_approval":
+      return "file-read";
+    case "file_change_approval":
+    case "apply_patch_approval":
+      return "file-change";
+    case "permissions_approval":
+      return "permissions";
+    default:
+      return null;
+  }
+}
+
+function isStalePendingRequestFailureDetail(detail: string | undefined): boolean {
+  if (!detail) return false;
+  const normalized = detail.toLowerCase();
+  return (
+    normalized.includes("stale pending approval request") ||
+    normalized.includes("stale pending user-input request") ||
+    normalized.includes("unknown pending approval request") ||
+    normalized.includes("unknown pending permission request") ||
+    normalized.includes("unknown pending user-input request") ||
+    normalized.includes("stale pending user input request") ||
+    normalized.includes("unknown pending user input request")
+  );
+}
+
+export const RESPONDING_INTERACTION_RECLAIM_GRACE_MS = 30_000;
+
+function respondingInteractionReclaimCutoff(requestedAt: string): string {
+  const requestedAtMs = Date.parse(requestedAt);
+  return Number.isNaN(requestedAtMs)
+    ? requestedAt
+    : new Date(requestedAtMs - RESPONDING_INTERACTION_RECLAIM_GRACE_MS).toISOString();
+}
+
+/**
+ * Whether this client may still send a response for the settlement. A
+ * `responding` claim older than the grace window is assumed orphaned (the
+ * claiming client went away), which is what lets a phone recover a prompt it
+ * half-answered before backgrounding.
+ */
+export function isPendingInteractionResponseClaimable(input: {
+  readonly status: OrchestrationPendingInteraction["status"];
+  readonly responseRequestedAt: string | null;
+  readonly requestedAt: string;
+}): boolean {
+  if (input.status === "pending" || input.status === "retryable" || input.status === "uncertain") {
+    return true;
+  }
+  if (input.status !== "responding") return false;
+  return (
+    input.responseRequestedAt === null ||
+    input.responseRequestedAt <= respondingInteractionReclaimCutoff(input.requestedAt)
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function activityLifecycleGeneration(payload: Record<string, unknown> | null): string | undefined {
+  const generation = payload?.lifecycleGeneration;
+  return typeof generation === "string" && generation.length > 0 ? generation : undefined;
+}
+
+// ---------------------------------------------------------------- reconcile
+
+/**
+ * Pure reconciliation of `thread.pendingInteractions[]` against one
+ * `thread.activity-appended` event. Ported from
+ * apps/web/src/storeEventReducer.ts::reconcilePendingInteractionsFromActivity.
+ */
+export function reconcilePendingInteractionsFromActivity(
+  threadId: ThreadId,
+  pendingInteractions: readonly OrchestrationPendingInteraction[] | undefined,
+  activity: OrchestrationThreadActivity,
+): readonly OrchestrationPendingInteraction[] | undefined {
+  const interactionKind: InteractionKind | null =
+    activity.kind === "approval.requested" ||
+    activity.kind === "approval.resolved" ||
+    activity.kind === "provider.approval.respond.failed"
+      ? "approval"
+      : activity.kind === "user-input.requested" ||
+          activity.kind === "user-input.resolved" ||
+          activity.kind === "provider.user-input.respond.failed"
+        ? "userInput"
+        : null;
+  if (interactionKind === null) return pendingInteractions;
+
+  const payload = asRecord(activity.payload);
+  const requestId = payload?.requestId;
+  if (typeof requestId !== "string" || requestId.length === 0) return pendingInteractions;
+
+  const lifecycleGeneration =
+    typeof payload?.lifecycleGeneration === "string" && payload.lifecycleGeneration.length > 0
+      ? payload.lifecycleGeneration
+      : null;
+  const existing = pendingInteractions ?? [];
+  const matchesIdentity = (interaction: OrchestrationPendingInteraction) =>
+    interaction.interactionKind === interactionKind &&
+    interaction.requestId === requestId &&
+    (lifecycleGeneration === null || interaction.lifecycleGeneration === lifecycleGeneration);
+
+  if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
+    const next = existing.filter((interaction) => !matchesIdentity(interaction));
+    return next.length === existing.length ? pendingInteractions : next;
+  }
+
+  if (
+    activity.kind === "provider.approval.respond.failed" ||
+    activity.kind === "provider.user-input.respond.failed"
+  ) {
+    const responseCommandId = payload?.responseCommandId;
+    if (typeof responseCommandId !== "string" || responseCommandId.length === 0) {
+      return pendingInteractions;
+    }
+    const settlementStatus: OrchestrationPendingInteraction["status"] =
+      payload?.settlementStatus === "retryable" ? "retryable" : "uncertain";
+    let changed = false;
+    const next = existing.map((interaction) => {
+      if (
+        !matchesIdentity(interaction) ||
+        interaction.status !== "responding" ||
+        interaction.responseCommandId !== responseCommandId
+      ) {
+        return interaction;
+      }
+      changed = true;
+      return { ...interaction, status: settlementStatus, resolvedAt: null };
+    });
+    return changed ? next : pendingInteractions;
+  }
+
+  // `*.requested`
+  const exactIndex = existing.findIndex(
+    (interaction) =>
+      interaction.interactionKind === interactionKind && interaction.requestId === requestId,
+  );
+  const current = exactIndex >= 0 ? existing[exactIndex] : undefined;
+  if (
+    current &&
+    current.lifecycleGeneration === lifecycleGeneration &&
+    (current.status === "responding" ||
+      current.status === "confirmed" ||
+      current.status === "uncertain")
+  ) {
+    return pendingInteractions;
+  }
+  const pending: OrchestrationPendingInteraction = {
+    interactionKind,
+    requestId: requestId as ApprovalRequestId,
+    threadId,
+    turnId: activity.turnId,
+    lifecycleGeneration,
+    status: "pending",
+    decision: null,
+    responseCommandId: null,
+    responseRequestedAt: null,
+    createdAt:
+      current?.lifecycleGeneration === lifecycleGeneration ? current.createdAt : activity.createdAt,
+    resolvedAt: null,
+  };
+  if (exactIndex < 0) return [...existing, pending];
+  const next = [...existing];
+  next[exactIndex] = pending;
+  return next;
+}
+
+/**
+ * Applies a `thread.{approval,user-input}-response-requested` event: the server
+ * echoes our own dispatch, which is how the optimistic "responding…" state
+ * becomes durable and survives a reconnect.
+ * Ported from apps/web/src/storeEventReducer.ts::markInteractionResponding.
+ */
+export function markInteractionResponding(
+  pendingInteractions: readonly OrchestrationPendingInteraction[] | undefined,
+  input: {
+    readonly interactionKind: InteractionKind;
+    readonly requestId: string;
+    readonly lifecycleGeneration: string | null;
+    readonly decision: ProviderApprovalDecision | null;
+    readonly commandId: string | null;
+    readonly createdAt: string;
+  },
+): readonly OrchestrationPendingInteraction[] | undefined {
+  if (pendingInteractions === undefined) return pendingInteractions;
+  let changed = false;
+  const next = pendingInteractions.map((interaction) => {
+    if (
+      interaction.interactionKind !== input.interactionKind ||
+      interaction.requestId !== input.requestId ||
+      interaction.lifecycleGeneration !== input.lifecycleGeneration ||
+      !isPendingInteractionResponseClaimable({
+        status: interaction.status,
+        responseRequestedAt: interaction.responseRequestedAt,
+        requestedAt: input.createdAt,
+      })
+    ) {
+      return interaction;
+    }
+    changed = true;
+    return {
+      ...interaction,
+      status: "responding" as const,
+      decision: input.decision,
+      responseCommandId: input.commandId as OrchestrationPendingInteraction["responseCommandId"],
+      responseRequestedAt: input.createdAt,
+      resolvedAt: null,
+    };
+  });
+  return changed ? next : pendingInteractions;
+}
+
+// ---------------------------------------------------------------- derivation
+
+/**
+ * Indexes explicit callback invalidations so a request the provider has already
+ * declared dead never renders as actionable.
+ * Ported from packages/shared/src/pendingInteractions.ts.
+ */
+function createStalePendingInteractionMatcher(
+  activities: readonly OrchestrationThreadActivity[],
+): (interaction: {
+  readonly interactionKind: InteractionKind;
+  readonly requestId: string;
+  readonly createdAt: string;
+  readonly lifecycleGeneration?: string | null;
+}) => boolean {
+  const staleAtByInstance = new Map<string, string>();
+  const keyOf = (kind: string, requestId: string, generation?: string | null) =>
+    `${kind}\u0000${pendingRequestInstanceKey(requestId, generation ?? undefined)}`;
+  for (const activity of activities) {
+    const kind =
+      activity.kind === "provider.approval.respond.failed"
+        ? "approval"
+        : activity.kind === "provider.user-input.respond.failed"
+          ? "userInput"
+          : null;
+    const payload = asRecord(activity.payload);
+    if (kind === null || payload === null) continue;
+    if (
+      typeof payload.requestId !== "string" ||
+      !isStalePendingRequestFailureDetail(
+        typeof payload.detail === "string" ? payload.detail : undefined,
+      )
+    ) {
+      continue;
+    }
+    const key = keyOf(kind, payload.requestId, activityLifecycleGeneration(payload));
+    const previous = staleAtByInstance.get(key);
+    if (previous === undefined || activity.createdAt > previous) {
+      staleAtByInstance.set(key, activity.createdAt);
+    }
+  }
+  return (interaction) => {
+    if (
+      interaction.lifecycleGeneration != null &&
+      staleAtByInstance.has(
+        keyOf(interaction.interactionKind, interaction.requestId, interaction.lifecycleGeneration),
+      )
+    ) {
+      return true;
+    }
+    const legacyStaleAt = staleAtByInstance.get(
+      keyOf(interaction.interactionKind, interaction.requestId),
+    );
+    // A legacy marker cannot identify a generation, so it only closes requests
+    // that existed when the callback was invalidated, not later id reuse.
+    return legacyStaleAt !== undefined && legacyStaleAt >= interaction.createdAt;
+  };
+}
+
+interface ReplaySpec<T extends { readonly requestId: ApprovalRequestId }> {
+  readonly interactionKind: InteractionKind;
+  readonly requestedActivityKind: string;
+  readonly resolvedActivityKind: string;
+  readonly parseRequested: (input: {
+    readonly activity: OrchestrationThreadActivity;
+    readonly payload: Record<string, unknown> | null;
+    readonly requestId: ApprovalRequestId;
+    readonly lifecycleGeneration: string | undefined;
+  }) => T | null;
+}
+
+function replayPendingInteractions<
+  T extends {
+    readonly requestId: ApprovalRequestId;
+    readonly createdAt: string;
+    readonly lifecycleGeneration?: string;
+  },
+>(
+  activities: readonly OrchestrationThreadActivity[],
+  settlements: readonly OrchestrationPendingInteraction[] | undefined,
+  spec: ReplaySpec<T>,
+  responseClaimReferenceAt: string | undefined,
+): T[] {
+  const openByInstance = new Map<string, T>();
+
+  for (const activity of orderedActivities(activities)) {
+    const payload = asRecord(activity.payload);
+    const rawRequestId = payload?.requestId;
+    if (typeof rawRequestId !== "string" || rawRequestId.length === 0) continue;
+    const requestId = rawRequestId as ApprovalRequestId;
+    const lifecycleGeneration = activityLifecycleGeneration(payload);
+
+    if (activity.kind === spec.requestedActivityKind) {
+      const pending = spec.parseRequested({ activity, payload, requestId, lifecycleGeneration });
+      if (!pending) continue;
+      // A new lifecycle generation supersedes every earlier instance of the id.
+      for (const [key, open] of openByInstance) {
+        if (open.requestId === requestId) openByInstance.delete(key);
+      }
+      openByInstance.set(pendingRequestInstanceKey(requestId, lifecycleGeneration), pending);
+      continue;
+    }
+
+    if (activity.kind === spec.resolvedActivityKind) {
+      if (lifecycleGeneration !== undefined) {
+        openByInstance.delete(pendingRequestInstanceKey(requestId, lifecycleGeneration));
+      } else {
+        for (const [key, open] of openByInstance) {
+          if (open.requestId === requestId) openByInstance.delete(key);
+        }
+      }
+    }
+  }
+
+  // Explicit stale-callback failures are terminal. Applied after the replay:
+  // their orchestration sequence can sit below a later request's, and must not
+  // resurrect an invalid callback.
+  if (openByInstance.size > 0) {
+    const isStale = createStalePendingInteractionMatcher(activities);
+    for (const [key, pending] of openByInstance) {
+      if (isStale({ ...pending, interactionKind: spec.interactionKind })) {
+        openByInstance.delete(key);
+      }
+    }
+  }
+
+  // The durable settlement list is authoritative when present: anything it does
+  // not still consider answerable is dropped, however the replay ended up.
+  if (settlements !== undefined) {
+    const actionableKeys = new Set(
+      settlements
+        .filter(
+          (settlement) =>
+            settlement.interactionKind === spec.interactionKind &&
+            (settlement.status === "pending" ||
+              settlement.status === "retryable" ||
+              (responseClaimReferenceAt !== undefined &&
+                isPendingInteractionResponseClaimable({
+                  status: settlement.status,
+                  responseRequestedAt: settlement.responseRequestedAt,
+                  requestedAt: responseClaimReferenceAt,
+                }))),
+        )
+        .map((settlement) =>
+          pendingRequestInstanceKey(
+            settlement.requestId,
+            settlement.lifecycleGeneration ?? undefined,
+          ),
+        ),
+    );
+    // Deleting the key the iterator is currently on is well-defined for Map.
+    for (const key of openByInstance.keys()) {
+      if (!actionableKeys.has(key)) openByInstance.delete(key);
+    }
+  }
+
+  return [...openByInstance.values()].toSorted((left, right) =>
+    left.createdAt.localeCompare(right.createdAt),
+  );
+}
+
+/**
+ * Attempt keys for settlements whose durable state permits a *new* submission.
+ *
+ * The cards guard submission with a one-shot ref keyed on the request instance
+ * plus this value, so the key must change exactly when a fresh attempt becomes
+ * legal. `pending` is excluded deliberately: it means no attempt has been made,
+ * which the card's initial (unset) guard already represents, and emitting a
+ * constant key for it would be noise. Every other actionable status is a second
+ * chance after a failed or abandoned attempt:
+ *
+ *   - `retryable`  — the provider rejected the response but will accept another.
+ *   - `uncertain`  — the dispatch failed with an unknown server-side outcome.
+ *   - `responding` past the reclaim grace window — the claiming client (possibly
+ *     this one, before a background/kill) is presumed gone.
+ *
+ * `status` is part of the key so a `responding` → `retryable` transition that
+ * keeps the same `responseCommandId` still re-arms the card.
+ */
+function responseAttemptKeysByInstance(
+  settlements: readonly OrchestrationPendingInteraction[],
+  interactionKind: InteractionKind,
+  responseClaimReferenceAt: string | undefined,
+): Map<string, string> {
+  const keys = new Map<string, string>();
+  for (const settlement of settlements) {
+    if (settlement.interactionKind !== interactionKind) continue;
+    if (settlement.status === "pending") continue;
+    const permitsNewAttempt =
+      settlement.status === "retryable" ||
+      settlement.status === "uncertain" ||
+      (responseClaimReferenceAt !== undefined &&
+        isPendingInteractionResponseClaimable({
+          status: settlement.status,
+          responseRequestedAt: settlement.responseRequestedAt,
+          requestedAt: responseClaimReferenceAt,
+        }));
+    if (!permitsNewAttempt) continue;
+    keys.set(
+      pendingRequestInstanceKey(settlement.requestId, settlement.lifecycleGeneration ?? undefined),
+      `${settlement.status}|${settlement.responseCommandId ?? ""}|${settlement.responseRequestedAt ?? ""}`,
+    );
+  }
+  return keys;
+}
+
+export function derivePendingApprovals(
+  activities: readonly OrchestrationThreadActivity[],
+  settlements?: readonly OrchestrationPendingInteraction[],
+  responseClaimReferenceAt?: string,
+): PendingApproval[] {
+  const approvals = replayPendingInteractions<PendingApproval>(
+    activities,
+    settlements,
+    {
+      interactionKind: "approval",
+      requestedActivityKind: "approval.requested",
+      resolvedActivityKind: "approval.resolved",
+      parseRequested: ({ activity, payload, requestId, lifecycleGeneration }) => {
+        const requestKind =
+          payload?.requestKind === "command" ||
+          payload?.requestKind === "file-read" ||
+          payload?.requestKind === "file-change" ||
+          payload?.requestKind === "permissions"
+            ? payload.requestKind
+            : approvalRequestKindFromRequestType(payload?.requestType);
+        if (!requestKind) return null;
+        const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
+        const sessionApprovalAvailable =
+          typeof payload?.sessionApprovalAvailable === "boolean"
+            ? payload.sessionApprovalAvailable
+            : undefined;
+        return {
+          requestId,
+          ...(lifecycleGeneration !== undefined ? { lifecycleGeneration } : {}),
+          requestKind,
+          createdAt: activity.createdAt,
+          ...(detail ? { detail } : {}),
+          ...(sessionApprovalAvailable !== undefined ? { sessionApprovalAvailable } : {}),
+        };
+      },
+    },
+    responseClaimReferenceAt,
+  );
+  if (settlements === undefined) return approvals;
+
+  const attemptKeys = responseAttemptKeysByInstance(
+    settlements,
+    "approval",
+    responseClaimReferenceAt,
+  );
+  if (attemptKeys.size === 0) return approvals;
+  const withAttemptKeys: PendingApproval[] = [];
+  for (const approval of approvals) {
+    const responseAttemptKey = attemptKeys.get(
+      pendingRequestInstanceKey(approval.requestId, approval.lifecycleGeneration),
+    );
+    withAttemptKeys.push(
+      responseAttemptKey === undefined ? approval : { ...approval, responseAttemptKey },
+    );
+  }
+  return withAttemptKeys;
+}
+
+function parseUserInputQuestions(
+  payload: Record<string, unknown> | null,
+): readonly UserInputQuestion[] | null {
+  const questions = payload?.questions;
+  if (!Array.isArray(questions)) return null;
+  const parsed: UserInputQuestion[] = [];
+  for (const entry of questions) {
+    const question = asRecord(entry);
+    if (
+      question === null ||
+      typeof question.id !== "string" ||
+      typeof question.header !== "string" ||
+      typeof question.question !== "string" ||
+      !Array.isArray(question.options)
+    ) {
+      continue;
+    }
+    const options: UserInputQuestion["options"][number][] = [];
+    for (const rawOption of question.options) {
+      const option = asRecord(rawOption);
+      if (option === null) continue;
+      if (typeof option.label !== "string" || typeof option.description !== "string") continue;
+      options.push({ label: option.label, description: option.description });
+    }
+    parsed.push({
+      id: question.id,
+      header: question.header,
+      question: question.question,
+      options,
+      multiSelect: question.multiSelect === true,
+    });
+  }
+  return parsed.length > 0 ? parsed : null;
+}
+
+export function derivePendingUserInputs(
+  activities: readonly OrchestrationThreadActivity[],
+  settlements?: readonly OrchestrationPendingInteraction[],
+  responseClaimReferenceAt?: string,
+): PendingUserInput[] {
+  const userInputs = replayPendingInteractions<PendingUserInput>(
+    activities,
+    settlements,
+    {
+      interactionKind: "userInput",
+      requestedActivityKind: "user-input.requested",
+      resolvedActivityKind: "user-input.resolved",
+      parseRequested: ({ activity, payload, requestId, lifecycleGeneration }) => {
+        const questions = parseUserInputQuestions(payload);
+        if (!questions) return null;
+        return {
+          requestId,
+          ...(lifecycleGeneration !== undefined ? { lifecycleGeneration } : {}),
+          createdAt: activity.createdAt,
+          questions,
+        };
+      },
+    },
+    responseClaimReferenceAt,
+  );
+  if (settlements === undefined) return userInputs;
+
+  const attemptKeys = responseAttemptKeysByInstance(
+    settlements,
+    "userInput",
+    responseClaimReferenceAt,
+  );
+  if (attemptKeys.size === 0) return userInputs;
+  const withAttemptKeys: PendingUserInput[] = [];
+  for (const userInput of userInputs) {
+    const responseAttemptKey = attemptKeys.get(
+      pendingRequestInstanceKey(userInput.requestId, userInput.lifecycleGeneration),
+    );
+    withAttemptKeys.push(
+      responseAttemptKey === undefined ? userInput : { ...userInput, responseAttemptKey },
+    );
+  }
+  return withAttemptKeys;
+}
+
+// ---------------------------------------------------------------- detail text
+
+export interface ParsedApprovalDetail {
+  /** Provider tool name from the `ToolName: {json}` prefix, when present. */
+  readonly tool: string | null;
+  readonly filePath: string | null;
+  /** Command / pattern / URL — whatever the request is actually about. */
+  readonly command: string | null;
+  readonly fallback: string | null;
+}
+
+function extractJsonString(payload: string, keys: readonly string[]): string | null {
+  try {
+    const start = payload.indexOf("{");
+    const end = payload.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      const parsed: unknown = JSON.parse(payload.slice(start, end + 1));
+      const record = asRecord(parsed);
+      if (record) {
+        for (const key of keys) {
+          const value = record[key];
+          if (typeof value === "string" && value.trim().length > 0) return value.trim();
+        }
+      }
+    }
+  } catch {
+    // Truncated stream JSON — fall through to the regex scan.
+  }
+  const escaped = keys.map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const match = new RegExp(`"(?:${escaped.join("|")})"\\s*:\\s*"([^"]+)"`, "i").exec(payload);
+  const value = match?.[1]?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+/**
+ * Turns the provider's `ToolName: {jsonArgs}` approval detail into something a
+ * phone-sized card can render. Ported from
+ * apps/web/src/components/chat/ComposerPendingApprovalPanel.tsx::parseApprovalDetail.
+ */
+export function parseApprovalDetail(detail: string | undefined): ParsedApprovalDetail {
+  const empty: ParsedApprovalDetail = {
+    tool: null,
+    filePath: null,
+    command: null,
+    fallback: null,
+  };
+  if (!detail || detail.length === 0) return empty;
+
+  const colonIndex = detail.indexOf(": ");
+  const tool = colonIndex === -1 ? null : detail.slice(0, colonIndex).trim() || null;
+  const payload = (colonIndex === -1 ? detail : detail.slice(colonIndex + 2)).replace(/…$/u, "");
+
+  const filePath = extractJsonString(payload, ["file_path", "path", "notebook_path", "filepath"]);
+  if (filePath) return { tool, filePath, command: null, fallback: null };
+
+  const command =
+    extractJsonString(payload, ["command", "cmd"]) ??
+    extractJsonString(payload, ["pattern", "query"]) ??
+    extractJsonString(payload, ["url"]);
+  if (command) return { tool, filePath: null, command, fallback: null };
+
+  const fallback = payload.replace(/\s+/gu, " ").trim();
+  return { tool, filePath: null, command: null, fallback: fallback.length > 0 ? fallback : null };
+}
+
+/** The turn a pending interaction belongs to, for "is this still current?" checks. */
+export function pendingInteractionTurnId(
+  settlements: readonly OrchestrationPendingInteraction[] | undefined,
+  requestId: ApprovalRequestId,
+): TurnId | null {
+  return settlements?.find((settlement) => settlement.requestId === requestId)?.turnId ?? null;
+}

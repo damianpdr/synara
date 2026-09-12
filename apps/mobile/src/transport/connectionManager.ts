@@ -50,6 +50,10 @@ export interface ConnectionState {
   readonly attempt: number;
   readonly serverInstanceId: string | null;
   readonly serverBuild: string | null;
+  /** Protocol revision agreed during the last successful negotiate. */
+  readonly protocolRevision: number | null;
+  /** Protocol epoch agreed during the last successful negotiate. */
+  readonly protocolEpoch: number | null;
   readonly lastError: string | null;
   /** Set only in the `fatal` state: what the user has to do about it. */
   readonly fatalAction: "update-client" | "update-server" | "re-pair" | null;
@@ -105,9 +109,13 @@ export class ConnectionManager {
     attempt: 0,
     serverInstanceId: null,
     serverBuild: null,
+    protocolRevision: null,
+    protocolEpoch: null,
     lastError: null,
     fatalAction: null,
   };
+  /** Set while the reconnect loop is sleeping; calling it cuts the backoff short. */
+  private wakeBackoff: (() => void) | null = null;
 
   constructor(options: ConnectionManagerOptions) {
     this.options = options;
@@ -153,10 +161,46 @@ export class ConnectionManager {
 
   /** Resumes with the existing subscription registry, so cursors survive. */
   resume(): void {
-    if (this.running) return;
+    if (this.running) {
+      // Already running but possibly mid-backoff: shorten the wait instead of
+      // leaving the user staring at a stale screen for up to 30 seconds.
+      this.wakeBackoff?.();
+      return;
+    }
     this.running = true;
     this.patch({ status: "reconnecting", attempt: 0 });
     void this.runLoop();
+  }
+
+  /**
+   * Drops the current socket (if any) and reconnects immediately, resetting the
+   * backoff. This is what the host calls when it has reason to believe the
+   * socket is dead — a long background stint, a failed `probe()`, or a user
+   * tapping "Retry" — and after a `fatal` verdict the user chose to retry.
+   */
+  reconnectNow(): void {
+    this.patch({ attempt: 0, fatalAction: null });
+    this.dropSocket();
+    if (this.running) {
+      this.patch({ status: "reconnecting" });
+      this.wakeBackoff?.();
+      return;
+    }
+    this.running = true;
+    this.patch({ status: "reconnecting" });
+    void this.runLoop();
+  }
+
+  /**
+   * Round-trips a `Ping` on the live socket. `false` means "no Pong inside
+   * `timeoutMs`", which on iOS usually means the socket survived a background
+   * stint on paper but its NAT mapping did not. Never throws, never reconnects:
+   * the caller decides.
+   */
+  probe(timeoutMs = 3_000): Promise<boolean> {
+    const socket = this.socket;
+    if (!socket || !socket.isOpen) return Promise.resolve(false);
+    return socket.ping(timeoutMs);
   }
 
   subscribeShell(onItem: (item: OrchestrationShellStreamItem) => void): Subscription {
@@ -253,11 +297,31 @@ export class ConnectionManager {
           });
         }
         if (!this.running) return;
-        await sleep(this.backoffMs(attempt));
+        await this.backoffSleep(sleep, this.backoffMs(attempt));
       }
     } finally {
       this.loopActive = false;
+      this.wakeBackoff = null;
     }
+  }
+
+  /**
+   * Backoff that `resume()`/`reconnectNow()` can cut short. Without this a
+   * foregrounded app can sit for the remainder of a 30s sleep before it even
+   * tries, which reads as a hang.
+   */
+  private async backoffSleep(sleep: (ms: number) => Promise<void>, ms: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = (): void => {
+        if (settled) return;
+        settled = true;
+        this.wakeBackoff = null;
+        resolve();
+      };
+      this.wakeBackoff = settle;
+      void sleep(ms).then(settle);
+    });
   }
 
   private isFatal(error: unknown): boolean {
@@ -346,6 +410,8 @@ export class ConnectionManager {
     this.patch({
       serverInstanceId: negotiated.serverInstanceId,
       serverBuild: negotiated.serverBuild,
+      protocolRevision: negotiated.negotiatedRevision,
+      protocolEpoch: negotiated.protocolEpoch,
     });
   }
 

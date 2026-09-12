@@ -5,7 +5,7 @@
     "version": "0.8.3",
     "orientation": "portrait",
     "scheme": "synara",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,

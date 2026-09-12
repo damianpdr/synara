@@ -132,9 +132,45 @@ connected → reconnecting` with full-jitter exponential backoff, fresh
     AppState-agnostic; `app/_layout.tsx` is the only file that knows about iOS
     lifecycle.
 - `src/state/` — one zustand v5 store plus two pure projections (shell list,
-  thread messages).
-- `app/` — three thin screens: connect (QR / pairing URL / host + token),
-  threads (projects → threads, live), thread detail (raw messages + status pill).
+  thread messages), keychain-backed credentials and UI preferences.
+- `src/ui/` — the design system: `tokens.ts` (light/dark palettes derived from
+  Synara's web theme, spacing, radii, the iOS type ramp) and the primitives
+  built on it (`Screen`, `Text`, `Card`, `PressableRow`, `Pill`/`Chip`/`Dot`,
+  `Button`, `IconButton`, `TextField`, `SectionHeader`, `Banner`, `EmptyState`,
+  `Skeleton`). `StyleSheet` only — no NativeWind.
+- `src/features/shell/` — pure list logic (`threadStatus.ts`, `threadRows.ts`,
+  `relativeTime.ts`, `createThread.ts`) plus the components that render it.
+- `src/features/connections/` — the pairing view and its error diagnostics.
+- `app/` — `index` (threads list, and the connection gate), `thread/[id]`,
+  `connect/` (pairing modal), `settings/` (settings modal), `new-thread`
+  (project picker sheet).
+
+## The app shell
+
+**Navigation.** One flat native stack. `app/index.tsx` is the main screen and
+also the gate: until `hydrate()` has read the keychain it renders a skeleton,
+and with nothing paired it renders the pairing view *in place* rather than
+redirecting, so no empty thread list ever flashes. `/thread/[id]` keeps its
+path. Settings, Connect and the project picker are modals.
+
+**Thread status.** `src/features/shell/threadStatus.ts` is a direct port of the
+web rules (`session-logic.ts`, `Sidebar.logic.ts`, `kanban.logic.ts`) so a
+thread never reads as "working" on the phone and "idle" in the browser. Order:
+pending approval → pending input → error → running → idle, and the list sorts
+by that rank before `updatedAt` desc.
+
+**Lifecycle.** `useAppLifecycle` no longer drops the socket on `background`.
+iOS suspends the process in seconds and usually kills the socket anyway;
+tearing it down ourselves forces a full re-handshake even for a two-second
+switch to Messages, which is the one case where the socket survives. The
+decision is made on the way back in instead: away < 10s → `Ping` and wait 3s
+for a `Pong` (`ConnectionManager.probe()`), reconnecting only if it is silent;
+away >= 10s → reconnect without asking. `pause()`/`resume()` are still exported
+and unchanged.
+
+**Terminal verdicts.** A 426 (`update-client` / `update-server`) covers the
+whole navigator with `FatalScreen` rather than appearing per screen, since no
+screen can render anything truthful in that state.
 
 ## What's deferred
 
@@ -159,6 +195,17 @@ connected → reconnecting` with full-jitter exponential backoff, fresh
 - **`resume()` retries after a fatal verdict.** Foregrounding the app re-runs
   the connect loop even when the last verdict was `update-client`; it will just
   fail again and re-report, but it is wasted work.
+- **`react-native-gesture-handler` cannot currently be imported.** Doing so
+  pulls in the Worklets babel plugin, which fails against the monorepo's
+  hoisted `@babel/core` 8 (`Requires Babel "^7.0.0-0", but was loaded with
+  "8.0.1"`). Nothing in the shell needs it — the native stack's swipe-back and
+  the form sheet are native — but any screen that wants a pan/swipe gesture has
+  to resolve that first.
+- **The UI is unverified on a device.** There is no simulator or Xcode on this
+  machine: `expo export -p ios` proves the bundle resolves and
+  `scripts/smoke.ts` proves the transport, but large-title/search-bar
+  behaviour, haptics, the keychain migration, the camera and the
+  background→probe timing have only been reasoned about.
 - **`app.json`'s `infoPlist` block is inert under Expo Go.** `NSAppTransportSecurity`
   and `NSCameraUsageDescription` only take effect in a build that has its own
   Info.plist. Expo Go's own plist governs instead — it does allow arbitrary

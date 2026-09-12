@@ -8,9 +8,12 @@
 
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRef } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
-import { colors, spacing } from "@/ui/theme";
+import { Button } from "@/ui/Button";
+import { EmptyState } from "@/ui/EmptyState";
+import { Text } from "@/ui/Text";
+import { useTheme } from "@/ui/ThemeProvider";
 
 export function QrScanner({
   onScanned,
@@ -19,6 +22,7 @@ export function QrScanner({
   readonly onScanned: (value: string) => void;
   readonly onCancel: () => void;
 }) {
+  const theme = useTheme();
   const [permission, requestPermission] = useCameraPermissions();
   // `onBarcodeScanned` fires once per camera frame while the code is in view,
   // and unmounting the scanner is async. Without this latch a one-time pairing
@@ -26,24 +30,25 @@ export function QrScanner({
   // shows "pairing failed" while it is in fact already connected.
   const scanned = useRef(false);
 
-  if (!permission) return <View style={styles.fill} />;
+  if (!permission) return <View style={[styles.fill, { backgroundColor: theme.colors.canvas }]} />;
 
   if (!permission.granted) {
     return (
-      <View style={[styles.fill, styles.centered]}>
-        <Text style={styles.text}>Synara needs the camera to scan a pairing QR code.</Text>
-        <Pressable style={styles.button} onPress={() => void requestPermission()}>
-          <Text style={styles.buttonLabel}>Grant access</Text>
-        </Pressable>
-        <Pressable style={styles.button} onPress={onCancel}>
-          <Text style={styles.buttonLabel}>Cancel</Text>
-        </Pressable>
+      <View style={[styles.fill, styles.centered, { backgroundColor: theme.colors.canvas }]}>
+        <EmptyState
+          icon="camera-outline"
+          title="Camera access needed"
+          message="Synara scans the pairing QR code your server prints on startup. The camera is used for nothing else."
+          actionLabel="Allow camera"
+          onAction={() => void requestPermission()}
+        />
+        <Button label="Cancel" variant="plain" onPress={onCancel} />
       </View>
     );
   }
 
   return (
-    <View style={styles.fill}>
+    <View style={[styles.fill, { backgroundColor: "#000000" }]}>
       <CameraView
         style={styles.fill}
         facing="back"
@@ -54,34 +59,43 @@ export function QrScanner({
           onScanned(event.data);
         }}
       />
-      <Pressable style={[styles.button, styles.overlayButton]} onPress={onCancel}>
-        <Text style={styles.buttonLabel}>Cancel</Text>
-      </Pressable>
+      <View style={styles.overlay} pointerEvents="box-none">
+        <View
+          style={[
+            styles.reticle,
+            { borderColor: theme.colors.accent, borderRadius: theme.radii.xl },
+          ]}
+        />
+        <View style={[styles.footer, { gap: theme.spacing.md, padding: theme.spacing.xl }]}>
+          <Text variant="subhead" style={styles.hint}>
+            Point the camera at the pairing QR code
+          </Text>
+          <Button label="Cancel" variant="tinted" onPress={onCancel} />
+        </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1, backgroundColor: colors.background },
-  centered: {
-    justifyContent: "center",
-    alignItems: "center",
-    gap: spacing.md,
-    padding: spacing.md,
-  },
-  text: { color: colors.text, textAlign: "center" },
-  button: {
-    borderWidth: 1,
-    borderColor: colors.accent,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    alignItems: "center",
-  },
-  overlayButton: {
+  fill: { flex: 1 },
+  centered: { justifyContent: "center", alignItems: "center" },
+  overlay: {
     position: "absolute",
-    bottom: spacing.lg,
-    alignSelf: "center",
-    backgroundColor: colors.background,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "space-between",
   },
-  buttonLabel: { color: colors.accent, fontWeight: "600" },
+  reticle: {
+    alignSelf: "center",
+    marginTop: "35%",
+    width: 232,
+    height: 232,
+    borderWidth: 2,
+    opacity: 0.9,
+  },
+  footer: { alignItems: "stretch" },
+  hint: { color: "#ffffff", textAlign: "center" },
 });

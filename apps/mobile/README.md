@@ -60,6 +60,12 @@ bun apps/mobile/scripts/smoke.ts \
 
 # or, with a one-time pairing link:
 bun apps/mobile/scripts/smoke.ts --pairing-url 'http://100.109.152.38:3775/pair#token=<credential>'
+
+# thread detail: subscribe, start a turn, watch it stream, fetch the turn diff
+bun apps/mobile/scripts/smoke-thread.ts \
+  --base-url http://100.109.152.38:3775 \
+  --session-token "$(cat /tmp/synara-mobile-dev/session-token.txt)" \
+  --send --seconds 40
 ```
 
 The script runs the exact modules the app uses (`src/transport/*`) under bun.
@@ -133,21 +139,27 @@ connected → reconnecting` with full-jitter exponential backoff, fresh
     lifecycle.
 - `src/state/` — one zustand v5 store plus two pure projections (shell list,
   thread messages).
+- `src/features/thread/` — the thread screen: a pure logic core
+  (`logic/`: event reducer inputs, pending-interaction derivation, timeline row
+  grouping, a `marked`-based markdown block model, unified-diff parsing — all
+  unit tested) plus self-contained RN components over it.
 - `app/` — three thin screens: connect (QR / pairing URL / host + token),
-  threads (projects → threads, live), thread detail (raw messages + status pill).
+  threads (projects → threads, live), thread detail (transcript, approval and
+  user-input cards, composer, diff sheet).
 
 ## What's deferred
 
 - **Push notifications.** Expo Go cannot receive them for a custom project on
   iOS; they need a dev build and an APNs key.
-- **Terminal.** No xterm equivalent; the terminal WS channels are untouched.
-- **Rich diffs.** `orchestration.getTurnDiff` is reachable from the transport but
-  nothing renders it.
+- **Rich diffs.** The thread screen's Changes sheet renders the latest turn's
+  unified diff as plain text with +/- colouring. Side-by-side, syntax
+  highlighting and whole-thread diffs are still web-only.
 - **Desktop-app remote mode.** No `synara://` bridge, no local-server discovery.
-- **Composer / sending turns.** `dispatchCommand` works (the smoke test uses it)
-  but there is no compose UI yet.
-- **Approvals and user-input prompts.** The commands are documented in the
-  transport but no UI surfaces them.
+- **Terminal.** No xterm equivalent; the terminal WS channels are untouched, and
+  thread tool rows only summarize what ran.
+- **Assistant text segment interleaving.** The web transcript interleaves a
+  message's `textSegments` with the tool rows they caused; mobile renders one
+  markdown block per assistant message instead.
 - **Offline cache.** Nothing is persisted except the credentials.
 
 ### Known gaps in what _is_ here

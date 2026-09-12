@@ -10,6 +10,8 @@
 
 import type {
   ClientOrchestrationCommand,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
   OrchestrationShellSnapshot,
   OrchestrationShellStreamItem,
   OrchestrationThreadDetailSnapshot,
@@ -44,6 +46,19 @@ export class SynaraClient {
     return this.socket.request<OrchestrationThreadDetailSnapshot | null>(
       ORCHESTRATION_METHODS.getThreadDetailSnapshot,
       { threadId },
+    );
+  }
+
+  /**
+   * Unified diff for a half-open turn-count window. The server validates
+   * `fromTurnCount <= toTurnCount` (packages/contracts/src/orchestration.ts
+   * `TurnCountRange`) and rejects the request otherwise, so callers derive the
+   * range from a recorded checkpoint rather than guessing.
+   */
+  getTurnDiff(input: OrchestrationGetTurnDiffInput): Promise<OrchestrationGetTurnDiffResult> {
+    return this.socket.request<OrchestrationGetTurnDiffResult>(
+      ORCHESTRATION_METHODS.getTurnDiff,
+      input,
     );
   }
 

@@ -2,6 +2,7 @@
   "expo": {
     "name": "Synara",
     "slug": "synara-mobile",
+    "owner": "artifex123",
     "version": "0.8.3",
     "orientation": "portrait",
     "scheme": "synara",
@@ -13,7 +14,8 @@
         "NSCameraUsageDescription": "Scan a Synara pairing QR code to connect to your server.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -22,6 +24,12 @@
     "plugins": ["expo-router", "expo-secure-store"],
     "experiments": {
       "typedRoutes": false
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7d45181c-e337-48b4-abf7-a0c1828c2acb"
+      }
     }
   }
 }
